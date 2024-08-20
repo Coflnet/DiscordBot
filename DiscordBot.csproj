@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>6f26e6c2-0d50-47b5-b492-9065a7380b9e</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Coflnet.Core" Version="0.2.0" />
+    <PackageReference Include="Coflnet.Payments.Client" Version="0.13.0" />
+    <PackageReference Include="Coflnet.Sky.Api.Client" Version="0.7.0" />
+    <PackageReference Include="Coflnet.Sky.Chat.Client" Version="0.2.1" />
+    <PackageReference Include="Coflnet.Sky.McConnect" Version="0.4.0" />
+    <PackageReference Include="Coflnet.Sky.PlayerName.Client" Version="0.2.2" />
+    <PackageReference Include="Discord.Net" Version="3.15.3" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.7" />
+    <PackageReference Include="StackExchange.Redis" Version="2.8.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.4.0" />
+  </ItemGroup>
+
+</Project>
