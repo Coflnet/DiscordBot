@@ -117,7 +117,7 @@ internal class DiscordHandler : BackgroundService
     {
         try
         {
-            var guildId = ulong.Parse("494960555363270656");
+            var guildId = ulong.Parse(_config["GUILD_ID"]);
             var guild = client.GetGuild(guildId);
             var _interactionService = new InteractionService(client.Rest);
             await _interactionService.AddModuleAsync<Commands>(_serviceProvider);
