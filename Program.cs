@@ -25,12 +25,15 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(s => ConnectionMultiplexer
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+app.UseSwagger(a =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+    a.RouteTemplate = "api/swagger/{documentName}/swagger.json";
+});
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/api/swagger/v1/swagger.json", "SkyApi v1");
+    c.RoutePrefix = "api";
+});
 
 app.UseHttpsRedirection();
 
