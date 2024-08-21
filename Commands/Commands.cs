@@ -15,22 +15,20 @@ public class Commands : InteractionModuleBase
     ILogger<Commands> logger;
     ProfileClient profileClient;
     Persistence persistence;
-    Coflnet.Payments.Client.Api.IUserApi userApi;
-    IConnectApi connectApi;
-
+    UserInfoUpdater userInfoUpdater;
     public Commands(ISearchApi searchApi,
                     ILogger<Commands> logger,
                     ProfileClient profileClient,
                     Persistence persistence,
                     Coflnet.Payments.Client.Api.IUserApi userApi,
-                    IConnectApi connectApi)
+                    IConnectApi connectApi,
+                    UserInfoUpdater userInfoUpdater)
     {
         this.searchApi = searchApi;
         this.logger = logger;
         this.profileClient = profileClient;
         this.persistence = persistence;
-        this.userApi = userApi;
-        this.connectApi = connectApi;
+        this.userInfoUpdater = userInfoUpdater;
     }
 
     public override Task BeforeExecuteAsync(ICommandInfo command)
@@ -50,11 +48,10 @@ public class Commands : InteractionModuleBase
         await DeferAsync(ephemeral: true);
         var user = (await searchApi.ApiSearchPlayerPlayerNameGetAsync(userName)).First();
         var profile = await profileClient.GetLookup(user.Uuid);
-        if(DoesNotMatchExecutor(profile))
+        if (DoesNotMatchExecutor(profile))
         {
             profile = await profileClient.GetLookup(user.Uuid, true);
         }
-
         if (DoesNotMatchExecutor(profile))
         {
             logger.LogInformation("Profile data: " + Newtonsoft.Json.JsonConvert.SerializeObject(profile));
@@ -77,32 +74,10 @@ public class Commands : InteractionModuleBase
         }
 
         var existing = await persistence.GetDiscordAccountInfo(Context.Interaction.User.Id) ?? new DiscordAccountInfo();
-        existing.DiscordId = Context.Interaction.User.Id;
-        existing.MinecraftUuid = Guid.Parse(user.Uuid);
-        var ignName = user.Name;
-        existing.MinecraftName = ignName;
-        var connect = await connectApi.ConnectMinecraftMcUuidGetAsync(user.Uuid);
-        existing.UserId = connect.ExternalId;
-        var owning = await userApi.UserUserIdOwnsUntilPostAsync(existing.UserId, ["premium", "premium-plus"]);
-        if (owning.TryGetValue("premium-plus", out var premPlus) && premPlus > DateTime.UtcNow)
-        {
-            existing.AccountTier = AccountTier.PREMIUM_PLUS;
-            existing.ExpiresAt = premPlus;
-        }
-        else if (owning.TryGetValue("premium", out var prem) && prem > DateTime.UtcNow)
-        {
-            existing.AccountTier = AccountTier.PREMIUM;
-            existing.ExpiresAt = prem;
-        }
-        else
-        {
-            existing.AccountTier = AccountTier.NONE;
-            existing.ExpiresAt = DateTime.MinValue;
-        }
-        await persistence.SaveDiscordAccountInfo(existing);
+        await userInfoUpdater.UpdateuserDetails(Context.Interaction.User.Id, user, existing);
         await FollowupAsync("", embed: new EmbedBuilder()
             .WithTitle("Success")
-            .WithDescription($"Your Minecraft account `{ignName}` has been linked to your Discord account")
+            .WithDescription($"Your Minecraft account `{user.Name}` has been linked to your Discord account")
             .WithColor(Color.Green)
             .Build(), ephemeral: true);
     }

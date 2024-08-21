@@ -19,6 +19,7 @@ builder.Services.AddSingleton<Coflnet.Payments.Client.Api.IUserApi, Coflnet.Paym
 builder.Services.AddSingleton<ChatService>();
 builder.Services.AddSingleton<Persistence>();
 builder.Services.AddSingleton<ProfileClient>();
+builder.Services.AddSingleton<UserInfoUpdater>();
 builder.Services.AddCoflnetCore();
 builder.Services.AddSingleton<ISearchApi>(di => new SearchApi(builder.Configuration["API_BASE_URL"]));
 builder.Services.AddSingleton<IConnectionMultiplexer>(s => ConnectionMultiplexer.Connect(builder.Configuration["CHAT_REDIS_HOST"]));

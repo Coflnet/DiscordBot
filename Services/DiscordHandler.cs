@@ -35,7 +35,8 @@ internal class DiscordHandler : BackgroundService
         client = new DiscordSocketClient(new DiscordSocketConfig
         {
             LogLevel = LogSeverity.Debug,
-            GatewayIntents = GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent
+            GatewayIntents = GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent,
+            AlwaysDownloadUsers = true
         });
         await client.LoginAsync(TokenType.Bot, _config["BotToken"]);
         // set intent to receive message
@@ -93,6 +94,13 @@ internal class DiscordHandler : BackgroundService
                 {
                     logger.LogError("Failed to send message to discord");
                 }
+            }
+            var account = persistence.GetDiscordAccountInfoByMcUuid(Guid.Parse(message.Uuid));
+            if (account == default)
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var updater = scope.ServiceProvider.GetRequiredService<UserInfoUpdater>();
+                await updater.UpdateUserDetails(client, message.Uuid, message.Name);
             }
         });
         return true;
@@ -157,7 +165,6 @@ internal class DiscordHandler : BackgroundService
                 var ctx = new SocketInteractionContext(client, interaction);
                 await _interactionService.ExecuteCommandAsync(ctx, scope.ServiceProvider);
             };
-
         }
         catch (Exception exception)
         {
