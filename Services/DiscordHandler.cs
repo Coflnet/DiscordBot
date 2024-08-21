@@ -72,6 +72,8 @@ internal class DiscordHandler : BackgroundService
 
     private bool OnMcChatMessage(ChatMessage message)
     {
+        if (message.ClientName == "cofl-discord")
+            return true; // abort self sent messages
         TryRun(async () =>
         {
             var profilePicture = $"https://mc-heads.net/avatar/{message.Uuid}";
