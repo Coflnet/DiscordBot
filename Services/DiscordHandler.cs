@@ -199,6 +199,11 @@ internal class DiscordHandler : BackgroundService
                     .Build());
                 return;
             }
+            if(msg.Content.StartsWith("/update-mc-user"))
+            {
+                await msg.ReplyAsync("Please type the command manually and wait for discord to recognize it");
+                return;
+            }
             try
             {
                 await chatService.Send(new()
