@@ -2,6 +2,7 @@
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+using Coflnet.Discord;
 using Coflnet.Sky.Api.Client.Api;
 using Coflnet.Sky.McConnect.Api;
 using Coflnet.Sky.PlayerName.Client.Api;
@@ -16,19 +17,22 @@ public class Commands : InteractionModuleBase
     ProfileClient profileClient;
     Persistence persistence;
     UserInfoUpdater userInfoUpdater;
+    ChatService chatService;
     public Commands(ISearchApi searchApi,
                     ILogger<Commands> logger,
                     ProfileClient profileClient,
                     Persistence persistence,
                     Coflnet.Payments.Client.Api.IUserApi userApi,
                     IConnectApi connectApi,
-                    UserInfoUpdater userInfoUpdater)
+                    UserInfoUpdater userInfoUpdater,
+                    ChatService chatService)
     {
         this.searchApi = searchApi;
         this.logger = logger;
         this.profileClient = profileClient;
         this.persistence = persistence;
         this.userInfoUpdater = userInfoUpdater;
+        this.chatService = chatService;
     }
 
     public override Task BeforeExecuteAsync(ICommandInfo command)
@@ -91,13 +95,33 @@ public class Commands : InteractionModuleBase
     [Discord.Interactions.RequireUserPermission(ChannelPermission.ManageRoles)]
     public async Task MuteForRule1(IMessage message)
     {
-        await RespondAsync("Muted for rule 1");
+        await ExecuteMute(message, 1);
     }
+
+    private async Task ExecuteMute(IMessage message, int ruleId)
+    {
+        await DeferAsync();
+        var user = message.Author as SocketWebhookUser;
+        var displayName = user.Username;
+        var apiResult = await searchApi.ApiSearchPlayerPlayerNameGetAsync(displayName);
+        var uuid = apiResult.First().Uuid;
+
+        await chatService.Mute(new()
+        {
+            Muter = Context.User.Id.ToString(),
+            Reason = $"rule {ruleId}",
+            Uuid = uuid,
+            Message = $"Violating rule {ruleId} with message \"{message.Content}\""
+        });
+
+        await FollowupAsync($"Muted {displayName} for rule {ruleId}");
+    }
+
     [MessageCommand("Mute for rule 2")]
     [Discord.Commands.RequireUserPermission(ChannelPermission.ManageRoles)]
     public async Task MuteForRule2(IMessage message)
     {
-        await RespondAsync("Muted for rule2");
+        await ExecuteMute(message, 2);
     }
 
     [AutocompleteCommand("name", "update-mc-user")]

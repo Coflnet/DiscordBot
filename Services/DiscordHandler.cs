@@ -4,6 +4,7 @@
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 using System.Text;
 using Cassandra.Data.Linq;
+using Coflnet.Core;
 using Coflnet.Discord;
 using Coflnet.Sky.Chat.Client.Model;
 using Discord;
@@ -56,7 +57,6 @@ internal class DiscordHandler : BackgroundService
                 logger.LogError(e, "Error handling message");
             }
         };
-        client.MessageCommandExecuted += MessageCommandHandler;
         var sub = await chatService.Subscribe(OnMcChatMessage);
         logger.LogInformation("Discord bot started");
 
@@ -64,11 +64,6 @@ internal class DiscordHandler : BackgroundService
         sub.Unsubscribe();
     }
 
-    private async Task MessageCommandHandler(SocketMessageCommand command)
-    {
-        logger.LogInformation($"Command {command.CommandName} executed by {command.User.Username} on {command.Data.Message.Content} by {command.Data.Message.Author.Username}");
-        await command.RespondAsync("sorry, this isn't a thing yet");
-    }
 
     private bool OnMcChatMessage(ChatMessage message)
     {
@@ -199,7 +194,7 @@ internal class DiscordHandler : BackgroundService
                     .Build());
                 return;
             }
-            if(msg.Content.StartsWith("/update-mc-user"))
+            if (msg.Content.StartsWith("/update-mc-user"))
             {
                 await msg.ReplyAsync("Please type the command manually and wait for discord to recognize it");
                 return;
@@ -213,10 +208,20 @@ internal class DiscordHandler : BackgroundService
                     SenderName = msg.Author.Username
                 });
             }
+            catch (Coflnet.Core.ApiException e)
+            {
+                var handle = await msg.ReplyAsync(e.Message);
+                await msg.DeleteAsync();
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(30000);
+                    await handle.DeleteAsync();
+                });
+            }
             catch (System.Exception e)
             {
                 logger.LogError(e, "Error sending message to chat");
-                await msg.ReplyAsync("Could not send message, <@267680402594988033>");
+                await msg.ReplyAsync("Could not send message, <@267680402594988033> ");
             }
             return;
         }
@@ -225,8 +230,8 @@ internal class DiscordHandler : BackgroundService
 
 public static class DiscordExtensions
 {
-    public static async Task ReplyAsync(this IMessage message, string content, bool isTTS = false, Embed embed = null, RequestOptions options = null, AllowedMentions allowedMentions = null, MessageComponent component = null)
+    public static async Task<IUserMessage> ReplyAsync(this IMessage message, string content, bool isTTS = false, Embed embed = null, RequestOptions options = null, AllowedMentions allowedMentions = null, MessageComponent component = null)
     {
-        await message.Channel.SendMessageAsync(content, isTTS, embed, options, allowedMentions, new MessageReference(message.Id), component);
+        return await message.Channel.SendMessageAsync(content, isTTS, embed, options, allowedMentions, new MessageReference(message.Id), component);
     }
 }
