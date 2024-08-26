@@ -101,6 +101,13 @@ public class Commands : InteractionModuleBase
     private async Task ExecuteMute(IMessage message, int ruleId)
     {
         await DeferAsync();
+        var userRoles = (Context.User as SocketGuildUser).Roles;
+        if (!userRoles.Any(r => r.Name.ToLower() == "mod"))
+        {
+            Console.WriteLine(string.Join(", ", userRoles.Select(r => r.Name)));
+            await FollowupAsync("You need to be a moderator to use this command", ephemeral: true);
+            return;
+        }
         var user = message.Author as SocketWebhookUser;
         var displayName = user.Username;
         var apiResult = await searchApi.ApiSearchPlayerPlayerNameGetAsync(displayName);
