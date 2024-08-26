@@ -193,7 +193,7 @@ internal class DiscordHandler : BackgroundService
             if (profile == default)
             {
                 await msg.ReplyAsync("", embed: new EmbedBuilder()
-                    .WithTitle("You need to link your Minecraft account")
+                    .WithTitle("You need to select your Minecraft account")
                     .WithDescription("To do so run **/update-mc-user** ")
                     .WithColor(Color.Red)
                     .Build());
