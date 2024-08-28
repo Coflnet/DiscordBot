@@ -46,7 +46,8 @@ public class Commands : InteractionModuleBase
         return base.AfterExecuteAsync(command);
     }
 
-    [SlashCommand("update-mc-user", "Request an update to Minecraft user via hypixel profile")]
+    [SlashCommand("update-mc-user", "Request an update to Minecraft user via hypixel profile", true)]
+    [DefaultMemberPermissions(GuildPermission.SendMessages)]
     public async Task UpdateMcUser([Summary("name", "Minecraft user name"), Autocomplete] string userName)
     {
         await DeferAsync(ephemeral: true);
