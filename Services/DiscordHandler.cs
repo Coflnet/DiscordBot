@@ -203,7 +203,7 @@ internal class DiscordHandler : BackgroundService
             {
                 await chatService.Send(new()
                 {
-                    SenderUuid = "384a029294fc445e863f2c42fe9709cb",
+                    SenderUuid = profile.MinecraftUuid.ToString("n"),
                     Message = msg.Content,
                     SenderName = msg.Author.Username
                 });
