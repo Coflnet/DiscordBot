@@ -3,6 +3,7 @@
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 using System.Text;
+using System.Text.RegularExpressions;
 using Cassandra.Data.Linq;
 using Coflnet.Core;
 using Coflnet.Discord;
@@ -72,11 +73,13 @@ internal class DiscordHandler : BackgroundService
         TryRun(async () =>
         {
             var profilePicture = $"https://mc-heads.net/avatar/{message.Uuid}";
+            // replace all §[a-f0-9] with empty string
+            var messageContent = Regex.Replace(message.Message, "§[a-f0-9]", "");
             foreach (var target in ChatWebhooks)
             {
                 var content = JsonConvert.SerializeObject(new
                 {
-                    content = message.Message,
+                    content = messageContent,
                     username = message.Name ?? "user",
                     avatar_url = profilePicture,
                     // prevent mentions
@@ -199,12 +202,14 @@ internal class DiscordHandler : BackgroundService
                 await msg.ReplyAsync("Please type the command manually and wait for discord to recognize it");
                 return;
             }
+            var message = msg.Content;
+            message = await ReplacePingsIgn(message);
             try
             {
                 await chatService.Send(new()
                 {
                     SenderUuid = profile.MinecraftUuid.ToString("n"),
-                    Message = msg.Content,
+                    Message = message,
                     SenderName = msg.Author.Username
                 });
             }
@@ -225,6 +230,22 @@ internal class DiscordHandler : BackgroundService
             }
             return;
         }
+    }
+
+    private async Task<string> ReplacePingsIgn(string message)
+    {
+        var pings = message.Split(" ").Where(x => x.StartsWith("<@") && x.EndsWith(">"));
+        foreach (var ping in pings)
+        {
+            var id = ulong.Parse(ping.Substring(2, ping.Length - 3));
+            var account = await persistence.GetDiscordAccountInfo(id);
+            if (account != default)
+            {
+                message = message.Replace("<@" + ping + ">", account.MinecraftName);
+            }
+        }
+
+        return message;
     }
 }
 
