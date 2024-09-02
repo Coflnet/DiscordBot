@@ -2,11 +2,11 @@ using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/[controller]")]
-public class AccountTierController : ControllerBase
+public class AccountController : ControllerBase
 {
     private Persistence persistence;
 
-    public AccountTierController(Persistence persistence)
+    public AccountController(Persistence persistence)
     {
         this.persistence = persistence;
     }

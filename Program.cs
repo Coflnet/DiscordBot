@@ -21,6 +21,7 @@ builder.Services.AddSingleton<Persistence>();
 builder.Services.AddSingleton<ProfileClient>();
 builder.Services.AddSingleton<UserInfoUpdater>();
 builder.Services.AddCoflnetCore();
+builder.Services.AddControllers();
 builder.Services.AddSingleton<ISearchApi>(di => new SearchApi(builder.Configuration["API_BASE_URL"]));
 builder.Services.AddSingleton<IConnectionMultiplexer>(s => ConnectionMultiplexer.Connect(builder.Configuration["CHAT_REDIS_HOST"]));
 
@@ -38,13 +39,6 @@ app.UseSwaggerUI(c =>
 
 app.UseHttpsRedirection();
 
-
-
-app.MapGet("/weatherforecast", () =>
-{
-    return "cool";
-})
-.WithName("GetWeatherForecast")
-.WithOpenApi();
+app.MapControllers();
 
 app.Run();
