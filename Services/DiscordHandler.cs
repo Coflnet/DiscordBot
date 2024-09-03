@@ -212,7 +212,8 @@ internal class DiscordHandler : BackgroundService
                 {
                     SenderUuid = profile.MinecraftUuid.ToString("n"),
                     Message = message,
-                    SenderName = msg.Author.Username
+                    SenderName = profile?.MinecraftName ?? msg.Author.Username,
+                    AccountTier = profile?.AccountTier ?? AccountTier.NONE
                 });
             }
             catch (Coflnet.Core.ApiException e)

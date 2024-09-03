@@ -93,12 +93,19 @@ public class ChatService
 
     public async Task Send(ModChatMessage message)
     {
+        var prefix = message.AccountTier switch
+        {
+            >= AccountTier.PREMIUM_PLUS => "§6",
+            AccountTier.PREMIUM => "§a",
+            AccountTier.STARTER_PREMIUM => "",
+            _ => "§7"
+        };
         try
         {
             var chatMsg = new ChatMessage(
                 message.SenderUuid,
                 message.SenderName,
-                "",
+                prefix,
                 message.Message);
             await api.ApiChatSendPostAsync(chatAuthKey, chatMsg);
         }
@@ -125,5 +132,6 @@ public class ChatService
         public string Message;
         [Key(3)]
         public string SenderUuid;
+        public AccountTier AccountTier;
     }
 }
