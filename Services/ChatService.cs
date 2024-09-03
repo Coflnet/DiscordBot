@@ -96,7 +96,7 @@ public class ChatService
         var prefix = message.AccountTier switch
         {
             >= AccountTier.PREMIUM_PLUS => "§6",
-            AccountTier.PREMIUM => "§a",
+            AccountTier.PREMIUM => "§2",
             AccountTier.STARTER_PREMIUM => "",
             _ => "§7"
         };
