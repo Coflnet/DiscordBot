@@ -182,6 +182,8 @@ internal class DiscordHandler : BackgroundService
 
     private async Task OnMessage(SocketMessage msg)
     {
+        // ignore messages from bots and webhooks
+        if (msg.Author.IsBot || msg.Author.IsWebhook) return;
         var channelName = (msg.Channel as SocketGuildChannel)?.Name;
         Console.WriteLine(msg.Content + " in " + channelName);
 
@@ -238,10 +240,12 @@ internal class DiscordHandler : BackgroundService
         foreach (var ping in pings)
         {
             var id = ulong.Parse(ping.Substring(2, ping.Length - 3));
+            logger.LogInformation("Ping: " + id);
             var account = await persistence.GetDiscordAccountInfo(id);
             if (account != default)
             {
-                message = message.Replace("<@" + ping + ">", account.MinecraftName);
+                message = message.Replace(ping, account.MinecraftName);
+                logger.LogInformation("Replaced: " + account.MinecraftName);
             }
         }
 
