@@ -197,6 +197,8 @@ internal class DiscordHandler : BackgroundService
                     .WithDescription("To do so run **/update-mc-user** ")
                     .WithColor(Color.Red)
                     .Build());
+                if(!msg.Content.Contains('<')) // only keep messages with pings
+                    await msg.DeleteAsync();
                 return;
             }
             if (msg.Content.StartsWith("/update-mc-user"))
