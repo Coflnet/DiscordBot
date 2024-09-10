@@ -94,6 +94,7 @@ internal class DiscordHandler : BackgroundService
                 {
                     logger.LogError("Failed to send message to discord");
                 }
+                logger.LogInformation("Sent message to discord {msg}", messageContent);
             }
             var account = persistence.GetDiscordAccountInfoByMcUuid(Guid.Parse(message.Uuid));
             if (account == default)
