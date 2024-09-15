@@ -2,6 +2,7 @@
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Cassandra.Data.Linq;
@@ -129,7 +130,7 @@ internal class DiscordHandler : BackgroundService
             var guildId = ulong.Parse(_config["GUILD_ID"]);
             var guild = client.GetGuild(guildId);
             var _interactionService = new InteractionService(client.Rest);
-            await _interactionService.AddModuleAsync<Commands>(_serviceProvider);
+            await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(),_serviceProvider);
             if (guild == null)
             {
                 logger.LogError("Guild not found");

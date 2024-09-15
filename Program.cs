@@ -4,6 +4,7 @@ using Coflnet.Discord;
 using Coflnet.Sky.Api.Client.Api;
 using Coflnet.Sky.McConnect.Api;
 using Coflnet.Sky.PlayerName.Client.Api;
+using Octokit;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -20,6 +21,20 @@ builder.Services.AddSingleton<ChatService>();
 builder.Services.AddSingleton<Persistence>();
 builder.Services.AddSingleton<ProfileClient>();
 builder.Services.AddSingleton<UserInfoUpdater>();
+builder.Services.AddSingleton<GitHubClient>(di =>
+{
+    var github = new GitHubClient(new ProductHeaderValue("CoflnetBot"))
+    {
+        Credentials = new Credentials(builder.Configuration["GitHubToken"])
+    };
+    return github;
+});
+builder.Services.AddSingleton<Octokit.GraphQL.Connection>(di =>
+{
+    var productInformation = new Octokit.GraphQL.ProductHeaderValue("CoflnetBot", "1");
+    var connection = new Octokit.GraphQL.Connection(productInformation,builder.Configuration["GitHubToken"]);
+    return connection;
+});
 builder.Services.AddCoflnetCore();
 builder.Services.AddControllers();
 builder.Services.AddSingleton<ISearchApi>(di => new SearchApi(builder.Configuration["API_BASE_URL"]));

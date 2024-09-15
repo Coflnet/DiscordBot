@@ -9,6 +9,7 @@ using Coflnet.Sky.PlayerName.Client.Api;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
+using Octokit.GraphQL;
 
 public class Commands : InteractionModuleBase
 {
