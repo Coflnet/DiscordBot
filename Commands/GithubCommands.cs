@@ -24,9 +24,9 @@ public class GithubCommands : InteractionModuleBase
     {
         await DeferAsync();
         var callingChannel = (SocketTextChannel)Context.Channel;
-        if (!callingChannel.Guild.CurrentUser.GuildPermissions.Administrator)
+        if (Context.User.Id != 267680402594988033)
         {
-            await FollowupAsync("You need to be an administrator to create issues");
+            await FollowupAsync("This can currently only be executed by <@267680402594988033>");
             return;
         }
         var lastMessage = callingChannel.GetMessagesAsync(1).FlattenAsync().Result.First();
