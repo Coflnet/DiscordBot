@@ -9,11 +9,13 @@ public class GithubCommands : InteractionModuleBase
 {
     GitHubClient github;
     Octokit.GraphQL.Connection connection;
+    ILogger<GithubCommands> logger;
 
-    public GithubCommands(GitHubClient github, Octokit.GraphQL.Connection connection)
+    public GithubCommands(GitHubClient github, Octokit.GraphQL.Connection connection, ILogger<GithubCommands> logger)
     {
         this.github = github;
         this.connection = connection;
+        this.logger = logger;
     }
 
     [SlashCommand("issue", "Creates a github issue", true)]
@@ -29,9 +31,18 @@ public class GithubCommands : InteractionModuleBase
             await FollowupAsync("This can currently only be executed by <@267680402594988033>");
             return;
         }
-        var lastMessage = callingChannel.GetMessagesAsync(1).FlattenAsync().Result.First();
-        var linkToMessage = lastMessage.GetJumpUrl();
-        body += "\ncontext:" + linkToMessage;
+        try
+        {
+            var lastMessage = callingChannel.GetMessagesAsync(1).FlattenAsync().Result.First();
+            var linkToMessage = lastMessage.GetJumpUrl();
+            body += "\ncontext:" + linkToMessage;
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Error getting last message");
+            var channelUrl = "https://discord.com/channels/" + callingChannel.Guild.Id + "/" + callingChannel.Id;
+            body += $"\ncontext: {channelUrl}";
+        }
         var newIssue = new NewIssue(title)
         {
             Body = body,
