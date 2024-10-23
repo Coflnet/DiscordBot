@@ -31,6 +31,12 @@ public class UserInfoUpdater
         existing.MinecraftName = ignName;
         var connect = await connectApi.ConnectMinecraftMcUuidGetAsync(user.Uuid);
         existing.UserId = connect.ExternalId;
+        await UpdatePremiumTierAndSave(existing);
+        return ignName;
+    }
+
+    public async Task UpdatePremiumTierAndSave(DiscordAccountInfo existing)
+    {
         var owning = await userApi.UserUserIdOwnsUntilPostAsync(existing.UserId, ["premium", "premium-plus"]);
         if (owning.TryGetValue("premium-plus", out var premPlus) && premPlus > DateTime.UtcNow)
         {
@@ -45,10 +51,9 @@ public class UserInfoUpdater
         else
         {
             existing.AccountTier = AccountTier.NONE;
-            existing.ExpiresAt = DateTime.MinValue;
+            existing.ExpiresAt = DateTime.UtcNow + TimeSpan.FromMinutes(15);
         }
         await persistence.SaveDiscordAccountInfo(existing);
-        return ignName;
     }
 
     internal async Task UpdateUserDetails(Discord.WebSocket.DiscordSocketClient client, string uuid, string name)

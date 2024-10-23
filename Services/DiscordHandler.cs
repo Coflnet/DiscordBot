@@ -24,14 +24,16 @@ internal class DiscordHandler : BackgroundService
     private ChatService chatService;
     private List<string> ChatWebhooks = new();
     private Persistence persistence;
+    private UserInfoUpdater userInfoUpdater;
 
-    public DiscordHandler(ILogger<DiscordHandler> logger, IConfiguration config, IServiceProvider serviceProvider, ChatService chatService, Persistence persistence)
+    public DiscordHandler(ILogger<DiscordHandler> logger, IConfiguration config, IServiceProvider serviceProvider, ChatService chatService, Persistence persistence, UserInfoUpdater userInfoUpdater)
     {
         this.logger = logger;
         _config = config;
         _serviceProvider = serviceProvider;
         this.chatService = chatService;
         this.persistence = persistence;
+        this.userInfoUpdater = userInfoUpdater;
     }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -130,7 +132,7 @@ internal class DiscordHandler : BackgroundService
             var guildId = ulong.Parse(_config["GUILD_ID"]);
             var guild = client.GetGuild(guildId);
             var _interactionService = new InteractionService(client.Rest);
-            await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(),_serviceProvider);
+            await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(), _serviceProvider);
             if (guild == null)
             {
                 logger.LogError("Guild not found");
@@ -199,7 +201,7 @@ internal class DiscordHandler : BackgroundService
                     .WithDescription("To do so run **/update-mc-user** ")
                     .WithColor(Color.Red)
                     .Build());
-                if(!msg.Content.Contains('<')) // only keep messages with pings
+                if (!msg.Content.Contains('<')) // only keep messages with pings
                     await msg.DeleteAsync();
                 return;
             }
@@ -212,6 +214,10 @@ internal class DiscordHandler : BackgroundService
             message = await ReplacePingsIgn(message);
             try
             {
+                if (profile.ExpiresAt < DateTime.UtcNow)
+                {
+                    await userInfoUpdater.UpdatePremiumTierAndSave(profile);
+                }
                 await chatService.Send(new()
                 {
                     SenderUuid = profile.MinecraftUuid.ToString("n"),
