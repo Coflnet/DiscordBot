@@ -37,6 +37,7 @@ public class Commands : InteractionModuleBase
         this.userInfoUpdater = userInfoUpdater;
         this.chatService = chatService;
         this.transactionApi = transactionApi;
+        this.connectApi = connectApi;
     }
 
     public override Task BeforeExecuteAsync(ICommandInfo command)
