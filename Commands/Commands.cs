@@ -96,21 +96,10 @@ public class Commands : InteractionModuleBase
     [DefaultMemberPermissions(GuildPermission.ManageRoles)]
     public async Task GetTransactions(string user)
     {
-        await DeferAsync(true);
-        if(!ulong.TryParse(user, out var userId))
+        var userId = await NewMethod(user);
+        if (userId == 0)
         {
-            userId = await GetUserIdFromMcName(user);
-        }
-        if (userId > 10000000000)
-        {
-            // discord id, try to get
-            var discordInfo = await persistence.GetDiscordAccountInfo(userId);
-            if(discordInfo == null)
-            {
-                await FollowupAsync("No user found with that id");
-                return;
-            }
-            userId = await GetUserIdFromMcName(discordInfo.MinecraftName);
+            return;
         }
         var transactions = await transactionApi.TransactionUUserIdGetAsync(userId.ToString(), 0, 10);
         await FollowupAsync("", ephemeral:true, embed: new EmbedBuilder()
@@ -119,11 +108,54 @@ public class Commands : InteractionModuleBase
             .WithColor(Color.Green)
             .Build());
     }
+    [SlashCommand("revert", "Revert a transactions", true)]
+    [DefaultMemberPermissions(GuildPermission.Administrator)]
+    public async Task RevertTransaction(string user, int transactionId)
+    {
+        var userId = await NewMethod(user);
+        if (userId == 0)
+        {
+            return;
+        }
+        var transaction = await transactionApi.TransactionPlanedUUserIdTTransactionIdDeleteAsync(userId.ToString(), transactionId);
+        await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
+            .WithTitle("Reverted " + transactionId)
+            .WithDescription($"Reverted transaction {transactionId} for {userId}, changed {transaction.Amount} {transaction.Id} - {transaction.Reference}")
+            .WithColor(Color.Green)
+            .Build());
+    }
+
+    private async Task<ulong> NewMethod(string user)
+    {
+        await DeferAsync(true);
+        if (!ulong.TryParse(user, out var userId))
+        {
+            userId = await GetUserIdFromMcName(user);
+        }
+        if (userId > 10000000000)
+        {
+            // discord id, try to get
+            var discordInfo = await persistence.GetDiscordAccountInfo(userId);
+            if (discordInfo == null)
+            {
+                await FollowupAsync("No user found with that id");
+                return 0;
+            }
+            userId = await GetUserIdFromMcName(discordInfo.MinecraftName);
+        }
+        return userId;
+    }
+
 
     private async Task<ulong> GetUserIdFromMcName(string user)
     {
         var uuid = (await searchApi.ApiSearchPlayerPlayerNameGetAsync(user)).First().Uuid;
         var connect = await connectApi.ConnectMinecraftMcUuidGetAsync(uuid);
+        if(connect == null || string.IsNullOrEmpty(connect.ExternalId))
+        {
+            await FollowupAsync("No user found with that name");
+            return 0;
+        }
         return ulong.Parse(connect.ExternalId);
     }
 
