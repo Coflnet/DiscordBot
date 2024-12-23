@@ -21,6 +21,7 @@ public class Commands : InteractionModuleBase
     ChatService chatService;
     Coflnet.Payments.Client.Api.ITransactionApi transactionApi;
     IConnectApi connectApi;
+    Coflnet.Payments.Client.Api.IUserApi userApi;
     public Commands(ISearchApi searchApi,
                     ILogger<Commands> logger,
                     ProfileClient profileClient,
@@ -28,7 +29,8 @@ public class Commands : InteractionModuleBase
                     Coflnet.Payments.Client.Api.ITransactionApi transactionApi,
                     IConnectApi connectApi,
                     UserInfoUpdater userInfoUpdater,
-                    ChatService chatService)
+                    ChatService chatService,
+                    Coflnet.Payments.Client.Api.IUserApi userApi)
     {
         this.searchApi = searchApi;
         this.logger = logger;
@@ -38,6 +40,7 @@ public class Commands : InteractionModuleBase
         this.chatService = chatService;
         this.transactionApi = transactionApi;
         this.connectApi = connectApi;
+        this.userApi = userApi;
     }
 
     public override Task BeforeExecuteAsync(ICommandInfo command)
@@ -123,7 +126,7 @@ public class Commands : InteractionModuleBase
             await FollowupAsync("Invalid transaction id");
             return;
         }
-        var transaction = await transactionApi.TransactionPlanedUUserIdTTransactionIdDeleteAsync(userId.ToString(), parsedId);
+        var transaction = await userApi.UserUserIdTransactionIdDeleteAsync(userId.ToString(), parsedId);
         await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
             .WithTitle("Reverted " + transactionId)
             .WithDescription($"Reverted transaction {transactionId} for {userId}, changed {transaction.Amount} {transaction.Id} - {transaction.Reference}")
