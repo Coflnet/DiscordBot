@@ -111,14 +111,19 @@ public class Commands : InteractionModuleBase
     }
     [SlashCommand("revert", "Revert a transactions", true)]
     [DefaultMemberPermissions(GuildPermission.Administrator)]
-    public async Task RevertTransaction(string user, int transactionId)
+    public async Task RevertTransaction(string user, string transactionId)
     {
         var userId = await NewMethod(user);
         if (userId == 0)
         {
             return;
         }
-        var transaction = await transactionApi.TransactionPlanedUUserIdTTransactionIdDeleteAsync(userId.ToString(), transactionId);
+        if(!int.TryParse(transactionId, out var parsedId))
+        {
+            await FollowupAsync("Invalid transaction id");
+            return;
+        }
+        var transaction = await transactionApi.TransactionPlanedUUserIdTTransactionIdDeleteAsync(userId.ToString(), parsedId);
         await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
             .WithTitle("Reverted " + transactionId)
             .WithDescription($"Reverted transaction {transactionId} for {userId}, changed {transaction.Amount} {transaction.Id} - {transaction.Reference}")
