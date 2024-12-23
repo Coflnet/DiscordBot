@@ -19,11 +19,13 @@ public class Commands : InteractionModuleBase
     Persistence persistence;
     UserInfoUpdater userInfoUpdater;
     ChatService chatService;
+    Coflnet.Payments.Client.Api.ITransactionApi transactionApi;
+    IConnectApi connectApi;
     public Commands(ISearchApi searchApi,
                     ILogger<Commands> logger,
                     ProfileClient profileClient,
                     Persistence persistence,
-                    Coflnet.Payments.Client.Api.IUserApi userApi,
+                    Coflnet.Payments.Client.Api.ITransactionApi transactionApi,
                     IConnectApi connectApi,
                     UserInfoUpdater userInfoUpdater,
                     ChatService chatService)
@@ -34,6 +36,7 @@ public class Commands : InteractionModuleBase
         this.persistence = persistence;
         this.userInfoUpdater = userInfoUpdater;
         this.chatService = chatService;
+        this.transactionApi = transactionApi;
     }
 
     public override Task BeforeExecuteAsync(ICommandInfo command)
@@ -86,6 +89,42 @@ public class Commands : InteractionModuleBase
             .WithDescription($"Your Minecraft account `{user.Name}` has been linked to your Discord account")
             .WithColor(Color.Green)
             .Build(), ephemeral: true);
+    }
+
+
+    [SlashCommand("transactions", "List a users transactions", true)]
+    [DefaultMemberPermissions(GuildPermission.ManageRoles)]
+    public async Task GetTransactions(string user)
+    {
+        await DeferAsync(true);
+        if(!ulong.TryParse(user, out var userId))
+        {
+            userId = await GetUserIdFromMcName(user);
+        }
+        if (userId > 10000000000)
+        {
+            // discord id, try to get
+            var discordInfo = await persistence.GetDiscordAccountInfo(userId);
+            if(discordInfo == null)
+            {
+                await FollowupAsync("No user found with that id");
+                return;
+            }
+            userId = await GetUserIdFromMcName(discordInfo.MinecraftName);
+        }
+        var transactions = await transactionApi.TransactionUUserIdGetAsync(userId.ToString(), 0, 10);
+        await FollowupAsync("", ephemeral:true, embed: new EmbedBuilder()
+            .WithTitle("Transactions for " + userId)
+            .WithDescription(string.Join("\n", transactions.Select(t => $"{t.Amount} {t.Id} - {t.Reference}")))
+            .WithColor(Color.Green)
+            .Build());
+    }
+
+    private async Task<ulong> GetUserIdFromMcName(string user)
+    {
+        var uuid = (await searchApi.ApiSearchPlayerPlayerNameGetAsync(user)).First().Uuid;
+        var connect = await connectApi.ConnectMinecraftMcUuidGetAsync(uuid);
+        return ulong.Parse(connect.ExternalId);
     }
 
     private bool DoesNotMatchExecutor(ProfileClient.HypixelProfile profile)

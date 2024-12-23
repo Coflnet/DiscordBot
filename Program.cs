@@ -17,6 +17,7 @@ builder.Services.AddHostedService<DiscordHandler>();
 builder.Services.AddSingleton<IPlayerNameApi, PlayerNameApi>(di => new PlayerNameApi(builder.Configuration["PLAYERNAME_BASE_URL"]));
 builder.Services.AddSingleton<IConnectApi, ConnectApi>(di => new ConnectApi(builder.Configuration["MCCONNECT_BASE_URL"]));
 builder.Services.AddSingleton<Coflnet.Payments.Client.Api.IUserApi, Coflnet.Payments.Client.Api.UserApi>(di => new Coflnet.Payments.Client.Api.UserApi(builder.Configuration["PAYMENTS_BASE_URL"]));
+builder.Services.AddSingleton<Coflnet.Payments.Client.Api.ITransactionApi, Coflnet.Payments.Client.Api.TransactionApi>(di => new Coflnet.Payments.Client.Api.TransactionApi(builder.Configuration["PAYMENTS_BASE_URL"]));
 builder.Services.AddSingleton<ChatService>();
 builder.Services.AddSingleton<Persistence>();
 builder.Services.AddSingleton<ProfileClient>();
