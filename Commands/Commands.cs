@@ -108,7 +108,7 @@ public class Commands : InteractionModuleBase
         var transactions = await transactionApi.TransactionUUserIdGetAsync(userId.ToString(), 0, 10);
         await FollowupAsync("", ephemeral:true, embed: new EmbedBuilder()
             .WithTitle("Transactions for " + userId)
-            .WithDescription(string.Join("\n", transactions.Select(t => $"{t.Id} {t.TimeStamp} {t.Amount}  - {t.Reference}")))
+            .WithDescription(string.Join("\n", transactions.Select(t => $"{t.Id} {t.TimeStamp} {t.Amount} {t.ProductId} - {t.Reference}")))
             .WithColor(Color.Green)
             .Build());
     }
