@@ -190,58 +190,83 @@ internal class DiscordHandler : BackgroundService
         if (msg.Author.IsBot || msg.Author.IsWebhook) return;
         var channelName = (msg.Channel as SocketGuildChannel)?.Name;
         Console.WriteLine(msg.Content + " in " + channelName);
+        if (msg.Content.Contains("steamcommunity.com"))
+        {
+            // delete steam links
+            await msg.DeleteAsync();
+            await msg.Author.SendMessageAsync("You posted a scam link (probably got hacked). Please secure your account. You can rejoin Coflnet discord in 10 minutes via the link on https://sky.coflent.com");
+            var kickTask = (msg.Author as SocketGuildUser)?.KickAsync();
+            if (kickTask != null)
+                await kickTask;
+            return;
+        }
+        if (msg.Content.Contains("@everyone"))
+        {
+            await msg.DeleteAsync();
+            if (msg.Author is SocketGuildUser guildUser)
+            {
+                await guildUser.SetTimeOutAsync(TimeSpan.FromHours(1));
+                await msg.Author.SendMessageAsync("You have been timed out for 1 hour for using @everyone");
+            }
+            return;
+        }
 
         if (channelName == "in-game-chat")
         {
-            var profile = await persistence.GetDiscordAccountInfo(msg.Author.Id);
-            if (profile == default)
-            {
-                await msg.ReplyAsync("", embed: new EmbedBuilder()
-                    .WithTitle("You need to select your Minecraft account")
-                    .WithDescription("To do so run **/update-mc-user** ")
-                    .WithColor(Color.Red)
-                    .Build());
-                if (!msg.Content.Contains('<')) // only keep messages with pings
-                    await msg.DeleteAsync();
-                return;
-            }
-            if (msg.Content.StartsWith("/update-mc-user"))
-            {
-                await msg.ReplyAsync("Please type the command manually and wait for discord to recognize it");
-                return;
-            }
-            var message = msg.Content;
-            message = await ReplacePingsIgn(message);
-            try
-            {
-                if (profile.ExpiresAt < DateTime.UtcNow)
-                {
-                    await userInfoUpdater.UpdatePremiumTierAndSave(profile);
-                }
-                await chatService.Send(new()
-                {
-                    SenderUuid = profile.MinecraftUuid.ToString("n"),
-                    Message = message,
-                    SenderName = profile?.MinecraftName ?? msg.Author.Username,
-                    AccountTier = profile?.AccountTier ?? AccountTier.NONE
-                });
-            }
-            catch (Coflnet.Core.ApiException e)
-            {
-                var handle = await msg.ReplyAsync(e.Message);
-                await msg.DeleteAsync();
-                _ = Task.Run(async () =>
-                {
-                    await Task.Delay(30000);
-                    await handle.DeleteAsync();
-                });
-            }
-            catch (System.Exception e)
-            {
-                logger.LogError(e, "Error sending message to chat");
-                await msg.ReplyAsync("Could not send message, <@267680402594988033> ");
-            }
+            await HandleInGameChat(msg);
             return;
+        }
+    }
+
+    private async Task HandleInGameChat(SocketMessage msg)
+    {
+        var profile = await persistence.GetDiscordAccountInfo(msg.Author.Id);
+        if (profile == default)
+        {
+            await msg.ReplyAsync("", embed: new EmbedBuilder()
+                .WithTitle("You need to select your Minecraft account")
+                .WithDescription("To do so run **/update-mc-user** ")
+                .WithColor(Color.Red)
+                .Build());
+            if (!msg.Content.Contains('<')) // only keep messages with pings
+                await msg.DeleteAsync();
+            return;
+        }
+        if (msg.Content.StartsWith("/update-mc-user"))
+        {
+            await msg.ReplyAsync("Please type the command manually and wait for discord to recognize it");
+            return;
+        }
+        var message = msg.Content;
+        message = await ReplacePingsIgn(message);
+        try
+        {
+            if (profile.ExpiresAt < DateTime.UtcNow)
+            {
+                await userInfoUpdater.UpdatePremiumTierAndSave(profile);
+            }
+            await chatService.Send(new()
+            {
+                SenderUuid = profile.MinecraftUuid.ToString("n"),
+                Message = message,
+                SenderName = profile?.MinecraftName ?? msg.Author.Username,
+                AccountTier = profile?.AccountTier ?? AccountTier.NONE
+            });
+        }
+        catch (Coflnet.Core.ApiException e)
+        {
+            var handle = await msg.ReplyAsync(e.Message);
+            await msg.DeleteAsync();
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(30000);
+                await handle.DeleteAsync();
+            });
+        }
+        catch (System.Exception e)
+        {
+            logger.LogError(e, "Error sending message to chat");
+            await msg.ReplyAsync("Could not send message, <@267680402594988033> ");
         }
     }
 
