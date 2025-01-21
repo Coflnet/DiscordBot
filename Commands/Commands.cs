@@ -106,7 +106,7 @@ public class Commands : InteractionModuleBase
             return;
         }
         var transactions = await transactionApi.TransactionUUserIdGetAsync(userId.ToString(), 0, 10);
-        await FollowupAsync("", ephemeral:true, embed: new EmbedBuilder()
+        await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
             .WithTitle("Transactions for " + userId)
             .WithDescription(string.Join("\n", transactions.Select(t => $"{t.Id} {t.TimeStamp} {t.Amount} {t.ProductId} - {t.Reference}")))
             .WithColor(Color.Green)
@@ -121,7 +121,7 @@ public class Commands : InteractionModuleBase
         {
             return;
         }
-        if(!int.TryParse(transactionId, out var parsedId))
+        if (!int.TryParse(transactionId, out var parsedId))
         {
             await FollowupAsync("Invalid transaction id");
             return;
@@ -137,7 +137,7 @@ public class Commands : InteractionModuleBase
     private async Task<ulong> NewMethod(string user)
     {
         await DeferAsync(true);
-        if (!ulong.TryParse(user, out var userId))
+        if (!ulong.TryParse(user.Replace("#", ""), out var userId))
         {
             userId = await GetUserIdFromMcName(user);
         }
@@ -160,7 +160,7 @@ public class Commands : InteractionModuleBase
     {
         var uuid = (await searchApi.ApiSearchPlayerPlayerNameGetAsync(user)).First().Uuid;
         var connect = await connectApi.ConnectMinecraftMcUuidGetAsync(uuid);
-        if(connect == null || string.IsNullOrEmpty(connect.ExternalId))
+        if (connect == null || string.IsNullOrEmpty(connect.ExternalId))
         {
             await FollowupAsync("No user found with that name");
             return 0;
