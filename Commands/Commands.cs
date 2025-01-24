@@ -101,11 +101,11 @@ public class Commands : InteractionModuleBase
     public async Task GetTransactions(string user)
     {
         var userId = await NewMethod(user);
-        if (userId == 0)
+        if (userId == null)
         {
             return;
         }
-        var transactions = await transactionApi.TransactionUUserIdGetAsync(userId.ToString(), 0, 10);
+        var transactions = await transactionApi.TransactionUUserIdGetAsync(userId, 0, 10);
         await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
             .WithTitle("Transactions for " + userId)
             .WithDescription(string.Join("\n", transactions.Select(t => $"{t.Id} {t.TimeStamp} {t.Amount} {t.ProductId} - {t.Reference}")))
@@ -117,7 +117,7 @@ public class Commands : InteractionModuleBase
     public async Task RevertTransaction(string user, string transactionId)
     {
         var userId = await NewMethod(user);
-        if (userId == 0)
+        if (userId == null)
         {
             return;
         }
@@ -134,12 +134,16 @@ public class Commands : InteractionModuleBase
             .Build());
     }
 
-    private async Task<ulong> NewMethod(string user)
+    private async Task<string> NewMethod(string user)
     {
         await DeferAsync(true);
         if (!ulong.TryParse(user.Replace("#", ""), out var userId))
         {
             userId = await GetUserIdFromMcName(user);
+        }
+        else if (user.Contains("#"))
+        {
+            return user; // is a license user
         }
         if (userId > 10000000000)
         {
@@ -148,11 +152,11 @@ public class Commands : InteractionModuleBase
             if (discordInfo == null)
             {
                 await FollowupAsync("No user found with that id");
-                return 0;
+                return null;
             }
             userId = await GetUserIdFromMcName(discordInfo.MinecraftName);
         }
-        return userId;
+        return userId.ToString();
     }
 
 
