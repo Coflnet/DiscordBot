@@ -17,15 +17,19 @@ namespace Coflnet.Discord;
 public class ChatService
 {
     private ChatApi api;
-    private string chatAuthKey;
     private List<string> mutedUuids;
     public List<string> MutedUuids => mutedUuids;
     private IConnectionMultiplexer chatConnection;
     public ChatService(IConfiguration config,
         IConnectionMultiplexer chatConnection)
     {
-        api = new(config["CHAT_BASE_URL"]);
-        chatAuthKey = config["CHAT_API_KEY"];
+        api = new(new Configuration()
+        {
+            BasePath = config["CHAT_BASE_URL"],
+            ApiKey = new Dictionary<string, string>(){
+                {"Authorization", config["CHAT_API_KEY"]}
+            }
+        });
         RefreshMutedUsers();
         this.chatConnection = chatConnection;
     }
@@ -72,7 +76,7 @@ public class ChatService
 
     public async Task<List<string>> GetMuteUuids()
     {
-        return (await api.ApiChatMutesGetAsync(chatAuthKey)).Select(m => m.Uuid).ToList();
+        return (await api.ApiChatMutesGetAsync()).Select(m => m.Uuid).ToList();
     }
 
     private void RefreshMutedUsers()
@@ -107,7 +111,7 @@ public class ChatService
                 message.SenderName,
                 prefix,
                 message.Message);
-            await api.ApiChatSendPostAsync(chatAuthKey, chatMsg);
+            await api.ApiChatSendPostAsync(chatMsg);
         }
         catch (ApiException e)
         {
@@ -119,7 +123,7 @@ public class ChatService
 
     public async Task Mute(Mute mute)
     {
-        await api.ApiChatMutePostAsync(chatAuthKey, mute);
+        await api.ApiChatMutePostAsync(mute);
         RefreshMutedUsers();
     }
 

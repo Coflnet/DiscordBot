@@ -129,7 +129,7 @@ internal class DiscordHandler : BackgroundService
     {
         try
         {
-            var guildId = ulong.Parse(_config["GUILD_ID"]);
+            var guildId = ulong.Parse(_config["GUILD_ID"] ?? throw new Exception("Guild ID not set"));
             var guild = client.GetGuild(guildId);
             var _interactionService = new InteractionService(client.Rest);
             await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(), _serviceProvider);
