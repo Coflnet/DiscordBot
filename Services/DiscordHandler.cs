@@ -30,9 +30,8 @@ internal class DiscordHandler : BackgroundService
         "1. Use /cofl setgui tfm (Makes it so you don't have to move your mouse while buying)",
         "2. When there is a BED (A countdown auction) Don't spam your mouse like crazy, but rather keep it at either 8-10~ cps. (Because of a hypixel mechanic it will just not register any other clicks and it will seem like you are just not clicking in the gui)",
         "## (Premium+ advice)",
-        "3. Use the /cofl switchregion us instance for lower ping (if your playing minecraft from America)",
-        "",
-        " - Thompie"]}
+        "3. Use the /cofl switchregion us instance for lower ping (if your playing minecraft from America)  ",
+        " -Thompie"]}
     };
 
     public DiscordHandler(ILogger<DiscordHandler> logger, IConfiguration config, IServiceProvider serviceProvider, ChatService chatService, Persistence persistence, UserInfoUpdater userInfoUpdater)
