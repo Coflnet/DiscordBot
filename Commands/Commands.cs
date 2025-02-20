@@ -22,6 +22,7 @@ public class Commands : InteractionModuleBase
     Coflnet.Payments.Client.Api.ITransactionApi transactionApi;
     IConnectApi connectApi;
     Coflnet.Payments.Client.Api.IUserApi userApi;
+    Coflnet.Payments.Client.Api.ITopUpApi topUpApi;
     public Commands(ISearchApi searchApi,
                     ILogger<Commands> logger,
                     ProfileClient profileClient,
@@ -30,7 +31,8 @@ public class Commands : InteractionModuleBase
                     IConnectApi connectApi,
                     UserInfoUpdater userInfoUpdater,
                     ChatService chatService,
-                    Coflnet.Payments.Client.Api.IUserApi userApi)
+                    Coflnet.Payments.Client.Api.IUserApi userApi,
+                    Coflnet.Payments.Client.Api.ITopUpApi topUpApi)
     {
         this.searchApi = searchApi;
         this.logger = logger;
@@ -41,6 +43,7 @@ public class Commands : InteractionModuleBase
         this.transactionApi = transactionApi;
         this.connectApi = connectApi;
         this.userApi = userApi;
+        this.topUpApi = topUpApi;
     }
 
     public override Task BeforeExecuteAsync(ICommandInfo command)
@@ -112,6 +115,34 @@ public class Commands : InteractionModuleBase
             .WithColor(Color.Green)
             .Build());
     }
+
+    [SlashCommand("compensate", "Compensate a user", true)]
+    [DefaultMemberPermissions(GuildPermission.Administrator)]
+    public async Task Compensate(string user, string amount, string reason)
+    {
+        var userId = await NewMethod(user);
+        if (userId == null)
+        {
+            return;
+        }
+        if (!int.TryParse(amount, out var parsedAmount))
+        {
+            await FollowupAsync("Invalid amount");
+            return;
+        }
+        var transaction = await topUpApi.TopUpCustomPostAsync(userId, new()
+        {
+            Amount = parsedAmount,
+            ProductId = "compensation",
+            Reference = reason
+        });
+        await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
+            .WithTitle("Compensated " + userId)
+            .WithDescription($"Compensated {userId} with {parsedAmount} - {reason}\nTransaction id: {transaction.Id}")
+            .WithColor(Color.Green)
+            .Build());
+    }
+
     [SlashCommand("revert", "Revert a transactions", true)]
     [DefaultMemberPermissions(GuildPermission.Administrator)]
     public async Task RevertTransaction(string user, string transactionId)
