@@ -130,7 +130,7 @@ public class Commands : InteractionModuleBase
             await FollowupAsync("Invalid amount");
             return;
         }
-        var transaction = await topUpApi.TopUpCustomPostAsync(userId, new()
+        await topUpApi.TopUpCustomPostAsync(userId, new()
         {
             Amount = parsedAmount,
             ProductId = "compensation",
@@ -138,7 +138,7 @@ public class Commands : InteractionModuleBase
         });
         await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
             .WithTitle("Compensated " + userId)
-            .WithDescription($"Compensated {userId} with {parsedAmount} - {reason}\nTransaction id: {transaction.Id}")
+            .WithDescription($"Compensated {userId} with {parsedAmount} - {reason}")
             .WithColor(Color.Green)
             .Build());
     }
