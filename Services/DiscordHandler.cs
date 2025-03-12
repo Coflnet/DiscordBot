@@ -22,7 +22,7 @@ internal class DiscordHandler : BackgroundService
     private DiscordSocketClient client;
     private IServiceProvider _serviceProvider;
     private ChatService chatService;
-    private List<string> ChatWebhooks = new();
+    private HashSet<string> ChatWebhooks = new();
     private Persistence persistence;
     private UserInfoUpdater userInfoUpdater;
     private Dictionary<string, string[]> QuickResponses = new(){
