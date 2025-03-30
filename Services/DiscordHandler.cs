@@ -29,9 +29,13 @@ internal class DiscordHandler : BackgroundService
         {"!new-user", ["## (Quick tutorial for MORE flips)",
         "1. Use /cofl setgui tfm (Makes it so you don't have to move your mouse while buying)",
         "2. When there is a BED (A countdown auction) Don't spam your mouse like crazy, but rather keep it at either 8-10~ cps. (Because of a hypixel mechanic it will just not register any other clicks and it will seem like you are just not clicking in the gui)",
+        "3. Set a Keybind to open next/best flip in your Minecraft settings (under the skycofl section). When holding the keybind it automatically opens the flip without having to click on the flip message (not bannable)",
         "## (Premium+ advice)",
-        "3. Use the /cofl switchregion us instance for lower ping (if your playing minecraft from America)  ",
-        " -Thompie"]}
+        "4. Use the /cofl switchregion us instance for lower ping (if your playing minecraft from America)  "
+        ]},
+        {"!wm", new[]{
+            "Using the mod over the website to flip is better and faster, because you can get the flips in-game, without having to copy the link from the website, saving you a lot of time" 
+        } }
     };
 
     public DiscordHandler(ILogger<DiscordHandler> logger, IConfiguration config, IServiceProvider serviceProvider, ChatService chatService, Persistence persistence, UserInfoUpdater userInfoUpdater)
