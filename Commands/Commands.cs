@@ -10,6 +10,7 @@ using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
 using Octokit.GraphQL;
+using RestSharp;
 
 public class Commands : InteractionModuleBase
 {
@@ -23,6 +24,7 @@ public class Commands : InteractionModuleBase
     IConnectApi connectApi;
     Coflnet.Payments.Client.Api.IUserApi userApi;
     Coflnet.Payments.Client.Api.ITopUpApi topUpApi;
+    IConfiguration configuration;
     public Commands(ISearchApi searchApi,
                     ILogger<Commands> logger,
                     ProfileClient profileClient,
@@ -32,7 +34,8 @@ public class Commands : InteractionModuleBase
                     UserInfoUpdater userInfoUpdater,
                     ChatService chatService,
                     Coflnet.Payments.Client.Api.IUserApi userApi,
-                    Coflnet.Payments.Client.Api.ITopUpApi topUpApi)
+                    Coflnet.Payments.Client.Api.ITopUpApi topUpApi,
+                    IConfiguration configuration)
     {
         this.searchApi = searchApi;
         this.logger = logger;
@@ -44,6 +47,7 @@ public class Commands : InteractionModuleBase
         this.connectApi = connectApi;
         this.userApi = userApi;
         this.topUpApi = topUpApi;
+        this.configuration = configuration;
     }
 
     public override Task BeforeExecuteAsync(ICommandInfo command)
@@ -165,9 +169,13 @@ public class Commands : InteractionModuleBase
             .Build());
     }
 
-    private async Task<string> NewMethod(string user)
+    private async Task<string?> NewMethod(string user)
     {
         await DeferAsync(true);
+        if (user.Contains('@'))
+        {
+            return await GetUserFromEmail(user);
+        }
         if (!ulong.TryParse(user.Replace("#", ""), out var userId))
         {
             userId = await GetUserIdFromMcName(user);
@@ -190,6 +198,28 @@ public class Commands : InteractionModuleBase
         return userId.ToString();
     }
 
+    private async Task<string?> GetUserFromEmail(string user)
+    {
+        var restClient = new RestClient(configuration["INDEXER_BASE_URL"]);
+        var request = new RestRequest("/user/" + user, Method.Get);
+        var response = await restClient.ExecuteAsync(request);
+        if (response.StatusCode != System.Net.HttpStatusCode.OK)
+        {
+            await FollowupAsync("No user found with that email");
+            return null;
+        }
+        var userInfo = Newtonsoft.Json.JsonConvert.DeserializeObject<UserInfo>(response.Content);
+        if (userInfo == null)
+        {
+            await FollowupAsync("No user found with that email");
+            return null;
+        }
+        return userInfo.Id.ToString();
+    }
+    public class UserInfo
+    {
+        public int Id { get; set; }
+    }
 
     private async Task<ulong> GetUserIdFromMcName(string user)
     {
