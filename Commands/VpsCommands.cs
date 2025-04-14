@@ -69,7 +69,7 @@ public class VpsCommands : InteractionModuleBase
 
         var embed = new EmbedBuilder()
             .WithTitle("VPS Logs")
-            .WithDescription(log.Count() == 0 ? "No logs found" : string.Join("\n", log))
+            .WithDescription(FormatLog(log))
             .WithColor(Color.Blue)
             .Build();
         await FollowupAsync(embed: embed, ephemeral: true);
@@ -83,7 +83,7 @@ public class VpsCommands : InteractionModuleBase
                 var logFollow = await GetVpsLog(target, DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow);
                 var logEmbed = new EmbedBuilder()
                     .WithTitle("VPS Logs" + (iterations - 1 == i ? " (stopped following)" : $" (following {DateTime.UtcNow:mm:ss})"))
-                    .WithDescription(logFollow.Count() == 0 ? "No logs found" : string.Join("\n", logFollow))
+                    .WithDescription(FormatLog(logFollow))
                     .WithColor(Color.Blue)
                     .Build();
                 await ModifyOriginalResponseAsync(m =>
@@ -92,6 +92,11 @@ public class VpsCommands : InteractionModuleBase
                     m.Content = "VPS Logs";
                 });
             }
+        }
+
+        static string FormatLog(IEnumerable<string> logFollow)
+        {
+            return logFollow.Count() == 0 ? "No logs found" : "```bash\n"+ string.Join("\n", logFollow) + "\n```";
         }
     }
 
@@ -143,7 +148,7 @@ public class VpsCommands : InteractionModuleBase
             return Enumerable.Empty<string>();
         }
         var root = JsonConvert.DeserializeObject<Root>(response.Content);
-        return root.data.result.SelectMany(r => r.values).Select(v => v[1]);
+        return root.data.result.SelectMany(r => r.values).Select(v => v[1]).Reverse();
     }
 
     public class Root
