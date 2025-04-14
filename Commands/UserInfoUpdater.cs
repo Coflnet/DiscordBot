@@ -26,7 +26,10 @@ public class UserInfoUpdater
     public async Task<string> UpdateuserDetails(ulong discordId, PlayerResult user, DiscordAccountInfo existing)
     {
         existing.DiscordId = discordId;
+        existing.MinecraftUuids ??= new List<Guid>();
         existing.MinecraftUuid = Guid.Parse(user.Uuid);
+        if(!existing.MinecraftUuids.Contains(existing.MinecraftUuid))
+            existing.MinecraftUuids.Add(existing.MinecraftUuid);
         var ignName = user.Name;
         existing.MinecraftName = ignName;
         var connect = await connectApi.ConnectMinecraftMcUuidGetAsync(user.Uuid);
