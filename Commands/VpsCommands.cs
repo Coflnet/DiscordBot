@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Coflnet.Sky.ModCommands.Client.Api;
 using Discord;
 using Discord.Interactions;
+using Discord.WebSocket;
 using Newtonsoft.Json;
 using RestSharp;
 
@@ -59,6 +60,16 @@ public class VpsCommands : InteractionModuleBase
         await FollowupAsync("Stopping instance", ephemeral: true);
     }
 
+    [ComponentInteraction("stop-following", true)]
+    public async Task StopFollowing()
+    {
+        await DeferAsync(ephemeral: true);
+        Console.WriteLine("Aborting follow " + Context.Interaction.GetType().Name);
+        var originalContext = Context.Interaction as SocketMessageComponent;
+        await originalContext!.DeleteOriginalResponseAsync();
+        await FollowupAsync("Stopped following", ephemeral: true);
+    }
+
     [SlashCommand("log", "Retrieve log")]
     public async Task VpsLog(bool follow = false)
     {
@@ -80,23 +91,37 @@ public class VpsCommands : InteractionModuleBase
             for (int i = 0; i < iterations; i++)
             {
                 await Task.Delay(5000);
+                var isLast = iterations - 1 == i;
                 var logFollow = await GetVpsLog(target, DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow);
                 var logEmbed = new EmbedBuilder()
-                    .WithTitle("VPS Logs" + (iterations - 1 == i ? " (stopped following)" : $" (following {DateTime.UtcNow:mm:ss})"))
+                    .WithTitle("VPS Logs" + (isLast ? " (stopped following)" : $" (following {DateTime.UtcNow:mm:ss})"))
                     .WithDescription(FormatLog(logFollow))
                     .WithColor(Color.Blue)
                     .Build();
-                await ModifyOriginalResponseAsync(m =>
+                try
                 {
-                    m.Embed = logEmbed;
-                    m.Content = "VPS Logs";
-                });
+                    await ModifyOriginalResponseAsync(m =>
+                    {
+                        m.Embed = logEmbed;
+                        if (isLast)
+                            m.Components = null;
+                        else
+                            m.Components = new ComponentBuilder()
+                                .WithButton("Stop Following", "stop-following", ButtonStyle.Danger)
+                                .Build();
+                    });
+                }
+                catch (InteractionException)
+                {
+                    logger.LogInformation("Log follow was aborted");
+                    break;
+                }
             }
         }
 
         static string FormatLog(IEnumerable<string> logFollow)
         {
-            return logFollow.Count() == 0 ? "No logs found" : "```bash\n"+ string.Join("\n", logFollow) + "\n```";
+            return logFollow.Count() == 0 ? "No logs found" : "```bash\n" + string.Join("\n", logFollow) + "\n```";
         }
     }
 
@@ -141,7 +166,7 @@ public class VpsCommands : InteractionModuleBase
         request.AddQueryParameter("limit", limit);
         var response = await client.ExecuteAsync(request);
         logger.LogInformation($"Querying loki with {client.BuildUri(request)}");
-        if(!response.IsSuccessful)
+        if (!response.IsSuccessful)
         {
             logger.LogError($"Failed to query loki: {response.Content}");
             await FollowupAsync($"Failed to get logs, sorry please let Äkwav know", ephemeral: true);
