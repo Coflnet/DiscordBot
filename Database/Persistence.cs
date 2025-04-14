@@ -37,10 +37,10 @@ public class Persistence
         discordAccountInfo = table;
     }
 
-    public async Task<DiscordAccountInfo> GetDiscordAccountInfo(ulong discordId)
+    public async Task<DiscordAccountInfo?> GetDiscordAccountInfo(ulong discordId)
     {
         BigInteger discordIdBigInt = new BigInteger(discordId);
-        return await discordAccountInfo.Where(d => d.DiscordId == discordIdBigInt).First().ExecuteAsync();
+        return await discordAccountInfo.Where(d => d.DiscordId == discordIdBigInt).FirstOrDefault().ExecuteAsync();
     }
     public async Task<DiscordAccountInfo> GetDiscordAccountInfoByMcUuid(Guid mcUuid)
     {
