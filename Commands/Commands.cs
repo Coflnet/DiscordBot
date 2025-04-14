@@ -5,6 +5,7 @@
 using Coflnet.Discord;
 using Coflnet.Sky.Api.Client.Api;
 using Coflnet.Sky.McConnect.Api;
+using Coflnet.Sky.ModCommands.Client.Api;
 using Coflnet.Sky.PlayerName.Client.Api;
 using Discord;
 using Discord.Interactions;
@@ -24,6 +25,7 @@ public class Commands : InteractionModuleBase
     IConnectApi connectApi;
     Coflnet.Payments.Client.Api.IUserApi userApi;
     Coflnet.Payments.Client.Api.ITopUpApi topUpApi;
+    IVpsApi vpsApi;
     IConfiguration configuration;
     public Commands(ISearchApi searchApi,
                     ILogger<Commands> logger,
@@ -35,7 +37,8 @@ public class Commands : InteractionModuleBase
                     ChatService chatService,
                     Coflnet.Payments.Client.Api.IUserApi userApi,
                     Coflnet.Payments.Client.Api.ITopUpApi topUpApi,
-                    IConfiguration configuration)
+                    IConfiguration configuration,
+                    IVpsApi vpsApi)
     {
         this.searchApi = searchApi;
         this.logger = logger;
@@ -48,6 +51,7 @@ public class Commands : InteractionModuleBase
         this.userApi = userApi;
         this.topUpApi = topUpApi;
         this.configuration = configuration;
+        this.vpsApi = vpsApi;
     }
 
     public override Task BeforeExecuteAsync(ICommandInfo command)
@@ -102,12 +106,53 @@ public class Commands : InteractionModuleBase
             .Build(), ephemeral: true);
     }
 
+    [SlashCommand("run", "Run a command as one of your minecraft accounts", true)]
+    [DefaultMemberPermissions(GuildPermission.SendMessages)]
+    public async Task RunCommand([Summary("command", "The command to run")] string command, [Summary("player", "Command to run"), Autocomplete,] string playerName)
+    {
+        await DeferAsync(ephemeral: true);
+        var user = (await searchApi.ApiSearchPlayerPlayerNameGetAsync(playerName)).First();
+        if (user == null)
+        {
+            await FollowupAsync("No user found with that name");
+            return;
+        }
+        var accountUuid = Guid.Parse(user.Uuid);
+        var profile = await persistence.GetDiscordAccountInfo(Context.Interaction.User.Id);
+        if (!profile.MinecraftUuids.Contains(accountUuid))
+        {
+            await FollowupAsync("", embed: new EmbedBuilder()
+                .WithTitle("Error")
+                .WithDescription(
+                $"""
+                The player `{user.Name}` is not linked to your Discord account.
+                Join Hypixel and follow these steps to set your Discord link:
+
+                1. Click on My Profile (Right Click) in a Hypixel lobby
+                2. Click on `Social Media` (Player head next to compas)
+                3. Left-click on `Discord`
+                4. Paste this in the Minecraft ingame chat: {Context.Interaction.User.Username}
+                5. Run `/update-mc-user` command
+                """)
+                .WithColor(Color.Red)
+                .Build());
+            return;
+        }
+        await vpsApi.VpsExecutePostAsync(new(new()
+        {
+            Command = command,
+            MinecraftName = playerName,
+            UserId = Context.Interaction.User.Id.ToString(),
+        }));
+        await FollowupAsync($"Sent comand to be executed as `{playerName}` nothing will happen if there is no connection");
+    }
+
 
     [SlashCommand("transactions", "List a users transactions", true)]
     [DefaultMemberPermissions(GuildPermission.ManageRoles)]
     public async Task GetTransactions(string user)
     {
-        var userId = await NewMethod(user);
+        var userId = await FindUserId(user);
         if (userId == null)
         {
             return;
@@ -122,9 +167,10 @@ public class Commands : InteractionModuleBase
 
     [SlashCommand("compensate", "Compensate a user", true)]
     [DefaultMemberPermissions(GuildPermission.Administrator)]
+    [RequireRole(842102236024930304)]
     public async Task Compensate(string user, string amount, string reason)
     {
-        var userId = await NewMethod(user);
+        var userId = await FindUserId(user);
         if (userId == null)
         {
             return;
@@ -149,9 +195,10 @@ public class Commands : InteractionModuleBase
 
     [SlashCommand("revert", "Revert a transactions", true)]
     [DefaultMemberPermissions(GuildPermission.Administrator)]
+    [RequireRole(842102236024930304)]
     public async Task RevertTransaction(string user, string transactionId)
     {
-        var userId = await NewMethod(user);
+        var userId = await FindUserId(user);
         if (userId == null)
         {
             return;
@@ -169,7 +216,7 @@ public class Commands : InteractionModuleBase
             .Build());
     }
 
-    private async Task<string?> NewMethod(string user)
+    private async Task<string?> FindUserId(string user)
     {
         await DeferAsync(true);
         if (user.Contains('@'))

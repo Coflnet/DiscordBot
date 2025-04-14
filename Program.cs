@@ -6,6 +6,8 @@ using Coflnet.Sky.McConnect.Api;
 using Coflnet.Sky.PlayerName.Client.Api;
 using Octokit;
 using StackExchange.Redis;
+using Coflnet.Sky.ModCommands.Client.Extensions;
+using Coflnet.Sky.ModCommands.Client.Client;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,6 +23,13 @@ builder.Services.AddSingleton<Coflnet.Payments.Client.Api.ITransactionApi, Cofln
 builder.Services.AddSingleton<Coflnet.Payments.Client.Api.ITopUpApi, Coflnet.Payments.Client.Api.TopUpApi>(di => new Coflnet.Payments.Client.Api.TopUpApi(builder.Configuration["PAYMENTS_BASE_URL"]));
 builder.Services.AddSingleton<ChatService>();
 builder.Services.AddSingleton<Persistence>();
+builder.Host.ConfigureApi((context, s, options) =>
+{
+    options.AddApiHttpClients(c =>
+    {
+        c.BaseAddress = new Uri(builder.Configuration["MOD_BASE_URL"]);
+    });
+});
 builder.Services.AddSingleton<ProfileClient>();
 builder.Services.AddSingleton<UserInfoUpdater>();
 builder.Services.AddSingleton<GitHubClient>(di =>
