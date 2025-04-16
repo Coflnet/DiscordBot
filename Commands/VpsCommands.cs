@@ -121,7 +121,7 @@ public class VpsCommands : InteractionModuleBase
 
         static string FormatLog(IEnumerable<string> logFollow)
         {
-            return logFollow.Count() == 0 ? "No logs found" : "```bash\n" + string.Join("\n", logFollow) + "\n```";
+            return logFollow.Count() == 0 ? "No logs found" : "```js\n" + string.Join("\n", logFollow) + "\n```";
         }
     }
 
