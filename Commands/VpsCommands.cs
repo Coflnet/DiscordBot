@@ -35,7 +35,7 @@ public class VpsCommands : InteractionModuleBase
         await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
         {
             Setting = setting,
-            Value = value
+            Value = value.Replace("\\\\", "\\").Replace("\\n", "\n")
         }));
         await FollowupAsync($"Set {setting} to {value}", ephemeral: true);
     }
