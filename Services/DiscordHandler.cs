@@ -34,7 +34,7 @@ internal class DiscordHandler : BackgroundService
         "4. Use the /cofl switchregion us instance for lower ping (if your playing minecraft from America)  "
         ]},
         {"!wm", new[]{
-            "Using the mod over the website to flip is better and faster, because you can get the flips in-game, without having to copy the link from the website, saving you a lot of time" 
+            "Using the mod over the website to flip is better and faster, because you can get the flips in-game, without having to copy the link from the website, saving you a lot of time"
         } }
     };
 
@@ -181,6 +181,19 @@ internal class DiscordHandler : BackgroundService
                 var ctx = new SocketInteractionContext(client, interaction);
                 await _interactionService.ExecuteCommandAsync(ctx, scope.ServiceProvider);
             };
+
+            client.JoinedGuild += async (guild) =>
+            {
+                try
+                {
+                    logger.LogInformation("Joined new guild: {guildName} ({guildId})", guild.Name, guild.Id);
+                    await SetupGuildIntegration(guild, _interactionService);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Error handling guild join for guild {guildId}", guild.Id);
+                }
+            };
         }
         catch (Exception exception)
         {
@@ -189,6 +202,29 @@ internal class DiscordHandler : BackgroundService
             Console.WriteLine(exception);
         }
         logger.LogInformation("Discord bot ready");
+    }
+
+    private async Task SetupGuildIntegration(SocketGuild guild, InteractionService _interactionService)
+    {
+        await _interactionService.RegisterCommandsToGuildAsync(guild.Id, true);
+
+        // Find or create in-game-chat webhook for the new server
+        var chatChannel = guild.Channels.FirstOrDefault(c => c.Name == "in-game-chat") as ITextChannel;
+        if (chatChannel != null)
+        {
+            var webhooks = await chatChannel.GetWebhooksAsync();
+            if (webhooks.Count == 0)
+            {
+                var webhook = await chatChannel.CreateWebhookAsync("Minecraft Chat");
+                ChatWebhooks.Add($"https://discord.com/api/webhooks/{webhook.Id}/{webhook.Token}");
+            }
+            else
+            {
+                var webhook = webhooks.First();
+                ChatWebhooks.Add($"https://discord.com/api/webhooks/{webhook.Id}/{webhook.Token}");
+            }
+            logger.LogInformation("Set up in-game-chat webhook for guild {guildId}", guild.Id);
+        }
     }
 
     private async Task Log(LogMessage message)
@@ -232,7 +268,7 @@ internal class DiscordHandler : BackgroundService
         {
             var responses = QuickResponses[msg.Content];
             await msg.Channel.SendMessageAsync(string.Join("\n", responses), messageReference: msg.Reference);
-            await msg.DeleteAsync(new(){AuditLogReason = "Quick response"});
+            await msg.DeleteAsync(new() { AuditLogReason = "Quick response" });
         }
     }
 
