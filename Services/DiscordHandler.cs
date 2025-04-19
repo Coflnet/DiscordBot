@@ -194,6 +194,19 @@ internal class DiscordHandler : BackgroundService
                     logger.LogError(ex, "Error handling guild join for guild {guildId}", guild.Id);
                 }
             };
+
+            foreach (var item in  client.Guilds)
+            {
+                try
+                {
+                    logger.LogInformation("Setting up guild integration for guild {guildName} ({guildId})", item.Name, item.Id);
+                    await SetupGuildIntegration(item, _interactionService);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Error setting up guild integration for guild {guildId}", item.Id);
+                }
+            }
         }
         catch (Exception exception)
         {
