@@ -27,7 +27,7 @@ public class VpsCommands : InteractionModuleBase
     }
 
     [SlashCommand("set", "Update a vps setting")]
-    public async Task VpsCommand(string setting, string value)
+    public async Task VpsCommand([Autocomplete] string setting, string value)
     {
         (string userId, Guid target) = await GetInstanceId();
         if (target == default)
@@ -38,6 +38,42 @@ public class VpsCommands : InteractionModuleBase
             Value = value.Replace("\\\\", "\\").Replace("\\n", "\n")
         }));
         await FollowupAsync($"Set {setting} to {value}", ephemeral: true);
+    }
+
+    [AutocompleteCommand("setting", "set")]
+    public async Task Autocomplete()
+    {
+        var interaction = (Context.Interaction as SocketAutocompleteInteraction) ?? throw new InvalidOperationException("Interaction is not an autocomplete interaction");
+        string userInput = interaction.Data.Current.Value.ToString();
+        var response = await vpsApi.VpsSettingsGetAsync();
+        if (!response.TryOk(out var options))
+        {
+            await interaction.RespondAsync(new[] { new AutocompleteResult("Failed to get settings", "error") });
+            return;
+        }
+        var transformed = options.Where(o => !o.Value.Hide!.Value).Select(o => new AutocompleteResult($"{o.Value.Prefix}{o.Value.RealName} - {FormatDescription(o)}", o.Key));
+        if (string.IsNullOrEmpty(userInput))
+        {
+            await interaction.RespondAsync(transformed.Take(25));
+            return;
+        }
+
+        await interaction.RespondAsync(transformed.Where(o => o.Name.Contains(userInput, StringComparison.OrdinalIgnoreCase)).Take(25));
+
+        static string FormatDescription(KeyValuePair<string, Coflnet.Sky.ModCommands.Client.Model.SettingDoc> v)
+        {
+            var description = v.Value.Info == null ? "" : $"{v.Value.Info} -";
+            var typeHint = v.Value.Type switch
+            {
+                "String[]" => "Separate options with commas",
+                "Object[]" => "Separate options with commas",
+                "Boolean" => "`true` or `false`",
+                "Dictionary`2" => "Separate key and value with space, not adding a space will remove the key",
+                "Int32" => "Number input",
+                _ => "Text input"
+            };
+            return description + $" {typeHint}";
+        }
     }
 
     [SlashCommand("start", "Start vps")]
