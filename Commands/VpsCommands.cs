@@ -42,8 +42,7 @@ public class VpsCommands : InteractionModuleBase
         if (!result.IsOk)
         {
             logger.LogInformation("Failed to set {setting} to {value} {response}", setting, value, result.RawContent);
-            var deserialized = JsonConvert.DeserializeObject<ApiException>(result.RawContent);
-            await FollowupAsync(deserialized.Message, ephemeral: true);
+            await PrintError(result);
             return;
         }
         if (value == null)
@@ -52,6 +51,12 @@ public class VpsCommands : InteractionModuleBase
             return;
         }
         await FollowupAsync($"Set {setting} to {value}", ephemeral: true);
+    }
+
+    private async Task PrintError(Coflnet.Sky.ModCommands.Client.Client.IApiResponse result)
+    {
+        var deserialized = JsonConvert.DeserializeObject<ApiException>(result.RawContent);
+        await FollowupAsync(deserialized.Message, ephemeral: true);
     }
 
     [AutocompleteCommand("setting", "set")]
@@ -166,7 +171,12 @@ public class VpsCommands : InteractionModuleBase
         (string userId, Guid target) = await GetInstanceId();
         if (target == default)
             return;
-        await vpsApi.VpsUserInstanceIdTurnOnPostAsync(userId, target);
+        var answer = await vpsApi.VpsUserInstanceIdTurnOnPostAsync(userId, target);
+        if(!answer.IsOk)
+        {
+            await PrintError(answer);
+            return;
+        }
         await FollowupAsync("Starting instance", ephemeral: true);
     }
 
