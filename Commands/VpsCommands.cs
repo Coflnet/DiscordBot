@@ -5,6 +5,7 @@
 using System.Text.Json.Serialization;
 using Coflnet.Core;
 using Coflnet.Sky.ModCommands.Client.Api;
+using Coflnet.Sky.ModCommands.Client.Model;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
@@ -87,6 +88,76 @@ public class VpsCommands : InteractionModuleBase
             };
             return description + $" {typeHint}";
         }
+    }
+
+    [SlashCommand("info", "Get vps info")]
+    public async Task VpsInfo()
+    {
+         _ =DeferAsync(ephemeral: true);
+        (var user, var target) = await GetInstance();
+        if (target == default)
+            return;
+        Embed? embed = await GetVpsInfoEmbed(1, user, target);
+        if (embed == null)
+        {
+            return;
+        }
+        MessageComponent components = GetPageSwitch(1);
+        await FollowupAsync(embed: embed, components: components, ephemeral: true);
+    }
+
+    private static MessageComponent GetPageSwitch(int page)
+    {
+        return new ComponentBuilder()
+            .WithButton("Next page", "setting-page" + (page == 1 ? 2 : 1), ButtonStyle.Secondary)
+            .Build();
+    }
+
+    private async Task<Embed?> GetVpsInfoEmbed(int page, DiscordAccountInfo user, Instance target)
+    {
+        var settingsTask = vpsApi.VpsSettingsGetAsync();
+        var result = await vpsApi.VpsUserInstanceIdsettingsGetAsync(user.UserId, target.Id!.Value);
+        var settingsResult = await settingsTask;
+        if (!settingsResult.TryOk(out var settings))
+        {
+            await FollowupAsync("Failed to get settings", ephemeral: true);
+            return null;
+        }
+        if (!result.TryOk(out var instance))
+        {
+            await FollowupAsync("Failed to get instance", ephemeral: true);
+            return null;
+        }
+        var combined = instance.Select(i => (i, settings[i.Key])).ToList();
+        var timestamp = new DateTimeOffset(target.PaidUntil!.Value).ToUnixTimeSeconds();
+        var desc = $"Instance id: `{target.Id.ToString()?.TakeLast(3).Aggregate("", (s, c) => s + c)}`\n" +
+                   $"Expires: <t:{timestamp}> (in <t:{timestamp}:R>)\n" +
+                   $"Kind: `{target.AppKind}`\n"; Console.WriteLine(desc);
+        return new EmbedBuilder()
+            .WithTitle("VPS Info (page " + page + ")")
+            .WithDescription(desc)
+            .WithFields(combined.Select(i =>
+            {
+                var setting = i.Item2;
+                var value = i.i.Value;
+                return new EmbedFieldBuilder()
+                    .WithName($"{setting.Prefix}{setting.RealName}")
+                    .WithValue(string.IsNullOrWhiteSpace(value) ? "Not set" : value)
+                    .WithIsInline(true);
+            }).Skip(25 * (page - 1)).Take(25))
+            .WithColor(Color.Blue)
+            .Build();
+    }
+
+    [ComponentInteraction("setting-page*", true)]
+    public async Task SettingsUpdate()
+    {
+        var originalContext = Context.Interaction as SocketMessageComponent;
+        (var user, var instance) = await GetInstance();
+        var page = int.Parse(originalContext!.Data.CustomId[12..]);
+        var emded = await GetVpsInfoEmbed(page, user, instance);
+        var component = GetPageSwitch(page);
+        await originalContext!.UpdateAsync(a => { a.Embed = emded; a.Components = component; });
     }
 
     [SlashCommand("start", "Start vps")]
@@ -174,9 +245,18 @@ public class VpsCommands : InteractionModuleBase
         }
     }
 
-    private async Task<(string, Guid)> GetInstanceId()
+    private async Task<(string, Guid)> GetInstanceId(bool defer = true)
     {
-        await DeferAsync(ephemeral: true);
+        if (defer)
+            await DeferAsync(ephemeral: true);
+        (var profile, var instance) = await GetInstance();
+        if (profile == default)
+            return default;
+        return (profile.UserId, instance.Id!.Value);
+    }
+
+    private async Task<(DiscordAccountInfo, Instance)> GetInstance()
+    {
         var profile = await persistence.GetDiscordAccountInfo(Context.User.Id);
         if (profile == null)
         {
@@ -194,7 +274,8 @@ public class VpsCommands : InteractionModuleBase
             await FollowupAsync("You don't seem to have any instance running");
             return default;
         }
-        return (profile.UserId, instance.First().Id!.Value);
+
+        return (profile, instance.First());
     }
 
     internal async Task<IEnumerable<string>> GetVpsLog(Guid instance, DateTimeOffset from, DateTimeOffset to)
@@ -208,7 +289,7 @@ public class VpsCommands : InteractionModuleBase
     private async Task<IEnumerable<string>> QueryLoki(string query, long start, long end, int limit = 20)
     {
         var client = new RestClient(configuration["LOKI_BASE_URL"]);
-        var request = new RestRequest("loki/api/v1/query_range", Method.Get);
+        var request = new RestRequest("loki/api/v1/query_range", RestSharp.Method.Get);
         request.AddQueryParameter("query", query);
         request.AddQueryParameter("start", start);
         request.AddQueryParameter("end", end);
