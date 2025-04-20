@@ -3,6 +3,7 @@
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 using System.Text.Json.Serialization;
+using Coflnet.Core;
 using Coflnet.Sky.ModCommands.Client.Api;
 using Discord;
 using Discord.Interactions;
@@ -27,16 +28,28 @@ public class VpsCommands : InteractionModuleBase
     }
 
     [SlashCommand("set", "Update a vps setting")]
-    public async Task VpsCommand([Autocomplete] string setting, string value)
+    public async Task VpsCommand([Autocomplete] string setting, string? value = null)
     {
         (string userId, Guid target) = await GetInstanceId();
         if (target == default)
             return;
-        await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
+        var result = await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
         {
             Setting = setting,
-            Value = value.Replace("\\\\", "\\").Replace("\\n", "\n")
+            Value = value?.Replace("\\\\", "\\").Replace("\\n", "\n")
         }));
+        if (!result.IsOk)
+        {
+            logger.LogInformation("Failed to set {setting} to {value} {response}", setting, value, result.RawContent);
+            var deserialized = JsonConvert.DeserializeObject<ApiException>(result.RawContent);
+            await FollowupAsync(deserialized.Message, ephemeral: true);
+            return;
+        }
+        if (value == null)
+        {
+            await FollowupAsync($"Toggled {setting}", ephemeral: true);
+            return;
+        }
         await FollowupAsync($"Set {setting} to {value}", ephemeral: true);
     }
 
