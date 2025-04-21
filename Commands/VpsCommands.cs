@@ -121,7 +121,7 @@ public class VpsCommands : InteractionModuleBase
     private async Task<Embed?> GetVpsInfoEmbed(int page, DiscordAccountInfo user, Instance target)
     {
         var settingsTask = vpsApi.VpsSettingsGetAsync();
-        var result = await vpsApi.VpsUserInstanceIdsettingsGetAsync(user.UserId, target.Id!.Value);
+        var result = await vpsApi.VpsUserInstanceIdSettingsGetAsync(user.UserId, target.Id!.Value);
         var settingsResult = await settingsTask;
         if (!settingsResult.TryOk(out var settings))
         {
