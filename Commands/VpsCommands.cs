@@ -56,6 +56,7 @@ public class VpsCommands : InteractionModuleBase
     private async Task PrintError(Coflnet.Sky.ModCommands.Client.Client.IApiResponse result)
     {
         var deserialized = JsonConvert.DeserializeObject<ApiException>(result.RawContent);
+        logger.LogInformation(result.RawContent);
         await FollowupAsync(deserialized.Message, ephemeral: true);
     }
 
