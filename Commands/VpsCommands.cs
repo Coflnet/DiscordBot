@@ -134,6 +134,7 @@ public class VpsCommands : InteractionModuleBase
         }
         if (!result.TryOk(out var instance))
         {
+            logger.LogInformation("Failed to get instances {response}", result.RawContent);
             await FollowupAsync("Failed to get instance", ephemeral: true);
             return null;
         }
@@ -385,6 +386,7 @@ public class VpsCommands : InteractionModuleBase
         var instances = await vpsApi.VpsInstancesGetAsync(new(profile.UserId));
         if (!instances.TryOk(out var instance))
         {
+            logger.LogInformation("Failed to get instances {response}", instances.RawContent);
             await FollowupAsync("Failed to get instances");
             return default;
         }
