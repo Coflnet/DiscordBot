@@ -2,6 +2,7 @@
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+using System.Net.WebSockets;
 using System.Text.Json.Serialization;
 using Coflnet.Core;
 using Coflnet.Sky.ModCommands.Client.Api;
@@ -99,7 +100,7 @@ public class VpsCommands : InteractionModuleBase
     [SlashCommand("info", "Get vps info")]
     public async Task VpsInfo()
     {
-         _ =DeferAsync(ephemeral: true);
+        _ = DeferAsync(ephemeral: true);
         (var user, var target) = await GetInstance();
         if (target == default)
             return;
@@ -173,7 +174,7 @@ public class VpsCommands : InteractionModuleBase
         if (target == default)
             return;
         var answer = await vpsApi.VpsUserInstanceIdTurnOnPostAsync(userId, target);
-        if(!answer.IsOk)
+        if (!answer.IsOk)
         {
             await PrintError(answer);
             return;
@@ -205,9 +206,11 @@ public class VpsCommands : InteractionModuleBase
     public async Task VpsLog(bool follow = false)
     {
         (string userId, Guid target) = await GetInstanceId();
+        target = Guid.Parse("d9a8b24a-034c-456b-9d27-83686ac0f39e");
         if (target == default)
             return;
-        var log = await GetVpsLog(target, DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow);
+        var startTime = DateTimeOffset.UtcNow;
+        var log = await GetVpsLog(target, DateTimeOffset.UtcNow.AddDays(-1), startTime);
 
         var embed = new EmbedBuilder()
             .WithTitle("VPS Logs")
@@ -216,38 +219,89 @@ public class VpsCommands : InteractionModuleBase
             .Build();
         await FollowupAsync(embed: embed, ephemeral: true);
 
-        if (follow)
+        if (!follow)
         {
-            var iterations = 50;
-            for (int i = 0; i < iterations; i++)
+            return;
+        }
+        var nanoSeconds = startTime.ToUnixTimeMilliseconds() * 1_000_000;
+        var url = configuration["LOKI_BASE_URL"].Replace("http:", "ws:") + "/loki/api/v1/tail";
+        var query = $"{{container=\"tpm-manager\", instance_id=\"{target}\"}}";
+        // Follow logs using WebSocket
+        try
+        {
+            var ws = new ClientWebSocket();
+            var cancellationToken = new CancellationTokenSource(TimeSpan.FromMinutes(14));
+
+            var fullUrl = $"{url}?query={Uri.EscapeDataString(query)}&start={nanoSeconds}&limit=20";
+            await ws.ConnectAsync(new Uri(fullUrl), cancellationToken.Token);
+
+            // Button to stop following logs
+            await ModifyOriginalResponseAsync(m =>
             {
-                await Task.Delay(5000);
-                var isLast = iterations - 1 == i;
-                var logFollow = await GetVpsLog(target, DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow);
-                var logEmbed = new EmbedBuilder()
-                    .WithTitle("VPS Logs" + (isLast ? " (stopped following)" : $" (following {DateTime.UtcNow:mm:ss})"))
-                    .WithDescription(FormatLog(logFollow))
-                    .WithColor(Color.Blue)
+                m.Components = new ComponentBuilder()
+                    .WithButton("Stop Following", "stop-following", ButtonStyle.Danger)
                     .Build();
+            });
+
+            // Receive logs in a background task
+            _ = Task.Run(async () =>
+            {
                 try
                 {
-                    await ModifyOriginalResponseAsync(m =>
-                    {
-                        m.Embed = logEmbed;
-                        if (isLast)
-                            m.Components = null;
-                        else
-                            m.Components = new ComponentBuilder()
-                                .WithButton("Stop Following", "stop-following", ButtonStyle.Danger)
-                                .Build();
-                    });
+                    logger.LogInformation("Connected to WebSocket: {url}", fullUrl);
+                    await HandlePaket(ws, cancellationToken);
                 }
-                catch (InteractionException)
+                catch (Exception ex)
                 {
-                    logger.LogInformation("Log follow was aborted");
+                    logger.LogError(ex, "Error in WebSocket stream");
+                }
+                finally
+                {
+                    if (ws.State != WebSocketState.Closed)
+                        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Connection closed", CancellationToken.None);
+                }
+                await ModifyOriginalResponseAsync(m => { m.Embed = new EmbedBuilder().WithTitle("Discord message can no longer be updated, please run command again").Build(); });
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to connect to WebSocket");
+            await FollowupAsync("Failed to connect to WebSocket for log following. Falling back to polling.", ephemeral: true);
+        }
+
+
+        async Task HandlePaket(ClientWebSocket ws, CancellationTokenSource cancellationToken)
+        {
+            var buffer = new byte[4096 * 16];
+            while (ws.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+            {
+                var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken.Token);
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Connection closed by client", CancellationToken.None);
                     break;
                 }
+
+                if (result.MessageType != WebSocketMessageType.Text)
+                {
+                    continue;
+                }
+                var message = System.Text.Encoding.UTF8.GetString(buffer, 0, result.Count);
+                logger.LogInformation("Received message: {message}", message);
+                var logEntry = JsonConvert.DeserializeObject<LogStreamResponse>(message);
+
+                if (logEntry?.streams?.FirstOrDefault()?.values?.Any() == true)
+                {
+                    var logEmbed = new EmbedBuilder()
+                        .WithTitle($"VPS Logs (following {DateTime.UtcNow:HH:mm:ss})")
+                        .WithDescription(FormatLog(logEntry.streams.First().values.Select(v => v[1])))
+                        .WithColor(Color.Blue)
+                        .Build();
+
+                    await ModifyOriginalResponseAsync(m => { m.Embed = logEmbed; });
+                }
             }
+            logger.LogInformation("WebSocket connection closed");
         }
 
         static string FormatLog(IEnumerable<string> logFollow)
@@ -256,6 +310,17 @@ public class VpsCommands : InteractionModuleBase
         }
     }
 
+    // Add class to deserialize WebSocket responses
+    public class LogStreamResponse
+    {
+        public List<LogStream> streams { get; set; } = new();
+    }
+
+    public class LogStream
+    {
+        public Dictionary<string, string> stream { get; set; } = new();
+        public List<string[]> values { get; set; } = new();
+    }
     private async Task<(string, Guid)> GetInstanceId(bool defer = true)
     {
         if (defer)
