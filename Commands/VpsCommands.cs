@@ -110,16 +110,16 @@ public class VpsCommands : InteractionModuleBase
         {
             return;
         }
-        MessageComponent components = GetPageSwitch(1, target.PaidUntil > DateTime.UtcNow);
+        MessageComponent components = GetPageSwitch(1, target.PaidUntil - TimeSpan.FromDays(20) > DateTime.UtcNow);
         await FollowupAsync(embed: embed, components: components, ephemeral: true);
     }
 
-    private static MessageComponent GetPageSwitch(int page, bool isPaid = true)
+    private static MessageComponent GetPageSwitch(int page, bool hideExtend = true)
     {
         var builder = new ComponentBuilder()
             .WithButton("Next page", "setting-page" + (page == 1 ? 2 : 1), ButtonStyle.Secondary);
-        if (!isPaid)
-            builder = builder.WithButton("Renew", "renew-vps", ButtonStyle.Primary);
+        if (!hideExtend)
+            builder = builder.WithButton("Renew (Costs CoflCoins)", "renew-vps", ButtonStyle.Primary);
         return builder.Build();
     }
 
@@ -320,7 +320,7 @@ public class VpsCommands : InteractionModuleBase
         async Task HandlePaket(ClientWebSocket ws, CancellationTokenSource cancellationToken)
         {
             var buffer = new byte[4096 * 16];
-                Queue<(long,string)> logReceived = new();
+            Queue<(long, string)> logReceived = new();
             while (ws.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
                 var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken.Token);
@@ -340,17 +340,17 @@ public class VpsCommands : InteractionModuleBase
 
                 if (logEntry?.streams?.FirstOrDefault()?.values?.Any() == true)
                 {
-                    var logContent = logEntry.streams.SelectMany(s => s.values.Select(v => (long.Parse(v[0]), v[1]))).OrderBy(v=>v.Item1).ToList();
+                    var logContent = logEntry.streams.SelectMany(s => s.values.Select(v => (long.Parse(v[0]), v[1]))).OrderBy(v => v.Item1).ToList();
 
                     foreach (var item in logContent)
                     {
                         logReceived.Enqueue(item);
-                        if(logReceived.Count > 20)
+                        if (logReceived.Count > 20)
                             logReceived.Dequeue();
                     }
                     var logEmbed = new EmbedBuilder()
                         .WithTitle($"VPS Logs (last received <t:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}:R>)")
-                        .WithDescription(FormatLog(logReceived.OrderBy(v=>v.Item1).Select(v => v.Item2)))
+                        .WithDescription(FormatLog(logReceived.OrderBy(v => v.Item1).Select(v => v.Item2)))
                         .WithColor(Color.Blue)
                         .Build();
 
