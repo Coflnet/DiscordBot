@@ -2,6 +2,7 @@
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+using System.Net;
 using System.Net.WebSockets;
 using System.Text.Json.Serialization;
 using Coflnet.Core;
@@ -251,6 +252,8 @@ public class VpsCommands : InteractionModuleBase
     public async Task VpsLog(bool follow = false)
     {
         (string userId, Guid target) = await GetInstanceId();
+        if (Dns.GetHostName().Contains("ekwav"))
+            target = Guid.Parse("b702b3a5-fe82-4cb8-adb2-83bcc76919d9");
         if (target == default)
             return;
         var startTime = DateTimeOffset.UtcNow;
@@ -267,7 +270,7 @@ public class VpsCommands : InteractionModuleBase
         {
             return;
         }
-        var nanoSeconds = startTime.ToUnixTimeMilliseconds() * 1_000_000;
+        var nanoSeconds = (startTime - TimeSpan.FromMinutes(2)).ToUnixTimeMilliseconds() * 1_000_000;
         var url = configuration["LOKI_BASE_URL"].Replace("http:", "ws:") + "/loki/api/v1/tail";
         var query = $"{{container=\"tpm-manager\", instance_id=\"{target}\"}}";
         // Follow logs using WebSocket
@@ -317,6 +320,7 @@ public class VpsCommands : InteractionModuleBase
         async Task HandlePaket(ClientWebSocket ws, CancellationTokenSource cancellationToken)
         {
             var buffer = new byte[4096 * 16];
+                Queue<(long,string)> logReceived = new();
             while (ws.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
                 var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken.Token);
@@ -336,9 +340,17 @@ public class VpsCommands : InteractionModuleBase
 
                 if (logEntry?.streams?.FirstOrDefault()?.values?.Any() == true)
                 {
+                    var logContent = logEntry.streams.SelectMany(s => s.values.Select(v => (long.Parse(v[0]), v[1]))).OrderBy(v=>v.Item1).ToList();
+
+                    foreach (var item in logContent)
+                    {
+                        logReceived.Enqueue(item);
+                        if(logReceived.Count > 20)
+                            logReceived.Dequeue();
+                    }
                     var logEmbed = new EmbedBuilder()
-                        .WithTitle($"VPS Logs (following {DateTime.UtcNow:HH:mm:ss})")
-                        .WithDescription(FormatLog(logEntry.streams.First().values.Select(v => v[1])))
+                        .WithTitle($"VPS Logs (last received <t:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}:R>)")
+                        .WithDescription(FormatLog(logReceived.OrderBy(v=>v.Item1).Select(v => v.Item2)))
                         .WithColor(Color.Blue)
                         .Build();
 
