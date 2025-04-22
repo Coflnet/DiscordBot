@@ -248,30 +248,53 @@ public class VpsCommands : InteractionModuleBase
         await originalContext!.DeleteOriginalResponseAsync();
         await FollowupAsync("Stopped following", ephemeral: true);
     }
-
-    [SlashCommand("log", "Retrieve log")]
-    public async Task VpsLog(bool follow = false)
+    [SlashCommand("log-file", "Get logfile of vps")]
+    public async Task GetLogFile()
     {
         (string userId, Guid target) = await GetInstanceId();
         if (Dns.GetHostName().Contains("ekwav"))
             target = Guid.Parse("b702b3a5-fe82-4cb8-adb2-83bcc76919d9");
         if (target == default)
-            return;
-        var startTime = DateTimeOffset.UtcNow;
-        var log = await GetVpsLog(target, DateTimeOffset.UtcNow.AddDays(-1), startTime);
-
-        var embed = new EmbedBuilder()
-            .WithTitle("VPS Logs")
-            .WithDescription(FormatLog(log))
-            .WithColor(Color.Blue)
-            .Build();
-        await FollowupAsync(embed: embed, ephemeral: true);
-
-        if (!follow)
         {
+            await FollowupAsync("You don't seem to have a vps yet", ephemeral: true);
             return;
         }
-        var nanoSeconds = (startTime - TimeSpan.FromMinutes(2)).ToUnixTimeMilliseconds() * 1_000_000;
+        var startTime = DateTimeOffset.UtcNow;
+        var fullLog = new List<string>();
+        for (int i = 0; i < 24; i++)
+        {
+            var batch = (await GetVpsLog(target, startTime.AddHours(-i), startTime.AddHours(-i + 1), 5000)).ToList();
+            if (batch.Count() == 0)
+                continue;
+            fullLog.InsertRange(0, batch);
+            fullLog.Insert(0, "Log export time: " + startTime.AddHours(-i).ToString("yyyy-MM-dd HH:mm:ss"));
+            if (batch.Any(b => b.Contains("Trying to log into"))) // logged on start
+                break;
+        }
+        // Create a Discord file attachment with log contents
+        var fileName = $"vps-log-{target}-{DateTime.UtcNow:yyyy-MM-dd-HH-mm}.txt";
+        var content = string.Join("\n", fullLog);
+
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
+        var attachment = new FileAttachment(stream, fileName);
+        await FollowupWithFileAsync(attachment, "VPS logs exported", ephemeral: true);
+        return;
+    }
+
+    [SlashCommand("log", "Retrieve log")]
+    public async Task VpsLog()
+    {
+        (string userId, Guid target) = await GetInstanceId();
+        if (Dns.GetHostName().Contains("ekwav"))
+            target = Guid.Parse("b702b3a5-fe82-4cb8-adb2-83bcc76919d9");
+        if (target == default)
+        {
+            await FollowupAsync("You don't seem to have a vps yet", ephemeral: true);
+            return;
+        }
+        var startTime = DateTimeOffset.UtcNow;
+
+        var nanoSeconds = (startTime - TimeSpan.FromDays(1)).ToUnixTimeMilliseconds() * 1_000_000;
         var url = configuration["LOKI_BASE_URL"].Replace("http:", "ws:") + "/loki/api/v1/tail";
         var query = $"{{container=\"tpm-manager\", instance_id=\"{target}\"}}";
         // Follow logs using WebSocket
@@ -301,6 +324,8 @@ public class VpsCommands : InteractionModuleBase
                 }
                 catch (Exception ex)
                 {
+                    if (ex.Message.Contains("Unknown Message"))
+                        return; // following got canceled and its more efficient to ignore the error for updating that to check for each update
                     logger.LogError(ex, "Error in WebSocket stream");
                 }
                 finally
@@ -316,7 +341,6 @@ public class VpsCommands : InteractionModuleBase
             logger.LogError(ex, "Failed to connect to WebSocket");
             await FollowupAsync("Failed to connect to WebSocket for log following. Falling back to polling.", ephemeral: true);
         }
-
 
         async Task HandlePaket(ClientWebSocket ws, CancellationTokenSource cancellationToken)
         {
@@ -420,12 +444,12 @@ public class VpsCommands : InteractionModuleBase
         return (profile, instance.First());
     }
 
-    internal async Task<IEnumerable<string>> GetVpsLog(Guid instance, DateTimeOffset from, DateTimeOffset to)
+    internal async Task<IEnumerable<string>> GetVpsLog(Guid instance, DateTimeOffset from, DateTimeOffset to, int limit = 20)
     {
         var query = $"{{container=\"tpm-manager\", instance_id=\"{instance}\"}}";
         var start = from.ToUnixTimeSeconds();
         var end = to.ToUnixTimeSeconds();
-        return await QueryLoki(query, start, end);
+        return await QueryLoki(query, start, end, limit);
     }
 
     private async Task<IEnumerable<string>> QueryLoki(string query, long start, long end, int limit = 20)
