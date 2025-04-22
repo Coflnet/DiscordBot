@@ -109,15 +109,17 @@ public class VpsCommands : InteractionModuleBase
         {
             return;
         }
-        MessageComponent components = GetPageSwitch(1);
+        MessageComponent components = GetPageSwitch(1, target.PaidUntil > DateTime.UtcNow);
         await FollowupAsync(embed: embed, components: components, ephemeral: true);
     }
 
-    private static MessageComponent GetPageSwitch(int page)
+    private static MessageComponent GetPageSwitch(int page, bool isPaid = true)
     {
-        return new ComponentBuilder()
-            .WithButton("Next page", "setting-page" + (page == 1 ? 2 : 1), ButtonStyle.Secondary)
-            .Build();
+        var builder = new ComponentBuilder()
+            .WithButton("Next page", "setting-page" + (page == 1 ? 2 : 1), ButtonStyle.Secondary);
+        if (!isPaid)
+            builder = builder.WithButton("Renew", "renew-vps", ButtonStyle.Primary);
+        return builder.Build();
     }
 
     private async Task<Embed?> GetVpsInfoEmbed(int page, DiscordAccountInfo user, Instance target)
@@ -165,6 +167,23 @@ public class VpsCommands : InteractionModuleBase
         var emded = await GetVpsInfoEmbed(page, user, instance);
         var component = GetPageSwitch(page);
         await originalContext!.UpdateAsync(a => { a.Embed = emded; a.Components = component; });
+    }
+
+    [ComponentInteraction("renew-vps", true)]
+    public async Task RenewVps()
+    {
+        var originalContext = Context.Interaction as SocketMessageComponent;
+        await originalContext!.UpdateAsync(a => { a.Embed = new EmbedBuilder().WithTitle("Renewing VPS").WithDescription("Please check your DMs").Build(); });
+        var (user, instance) = await GetInstance();
+        if (instance == default)
+            return;
+        var result = await vpsApi.VpsUserInstanceIdExtendPostAsync(user.UserId, instance.Id!.Value);
+        if (!result.IsOk)
+        {
+            await PrintError(result);
+            return;
+        }
+        await FollowupAsync("Renewed VPS", ephemeral: true);
     }
 
     [SlashCommand("start", "Start vps")]
