@@ -201,6 +201,31 @@ public class VpsCommands : InteractionModuleBase
         await FollowupAsync("Starting instance", ephemeral: true);
     }
 
+    [SlashCommand("import", "Import json vps settings, eg from TPM")]
+    public async Task VpsImport(IAttachment settingsFile)
+    {
+        (string userId, Guid target) = await GetInstanceId();
+        if (target == default)
+            return;
+        var url = settingsFile.Url;
+        var client = new RestClient(url);
+        var request = new RestRequest("", Method.Get);
+        var response = await client.ExecuteAsync(request);
+        if (!response.IsSuccessful || response.Content == null)
+        {
+            await FollowupAsync("Failed to get settings file", ephemeral: true);
+            return;
+        }
+        var content = response.Content;
+        var result = await vpsApi.VpsUserInstanceIdImportPostAsync(userId, target, content);
+        if (!result.IsOk)
+        {
+            await PrintError(result);
+            return;
+        }
+        await FollowupAsync("Imported settings, take a look with /vps info", ephemeral: true);
+    }
+
     [SlashCommand("stop", "Stop vps")]
     public async Task VpsStop()
     {
@@ -225,7 +250,6 @@ public class VpsCommands : InteractionModuleBase
     public async Task VpsLog(bool follow = false)
     {
         (string userId, Guid target) = await GetInstanceId();
-        target = Guid.Parse("d9a8b24a-034c-456b-9d27-83686ac0f39e");
         if (target == default)
             return;
         var startTime = DateTimeOffset.UtcNow;
