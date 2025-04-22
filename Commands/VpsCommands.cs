@@ -5,6 +5,7 @@
 using System.Net;
 using System.Net.WebSockets;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Coflnet.Core;
 using Coflnet.Sky.ModCommands.Client.Api;
 using Coflnet.Sky.ModCommands.Client.Model;
@@ -362,7 +363,15 @@ public class VpsCommands : InteractionModuleBase
 
         static string FormatLog(IEnumerable<string> logFollow)
         {
-            return logFollow.Count() == 0 ? "No recent logs found, is the server on?" : "```js\n" + string.Join("\n", logFollow) + "\n```";
+            if (logFollow.Count() == 0)
+                return "No recent logs found, is the server on?";
+            var primary = "```js\n" + string.Join("\n", logFollow) + "\n```";
+            var linkMatch = Regex.Match(primary, @"https?://[^\s]+");
+            if (linkMatch.Success)
+            {
+                primary += "\nFound link: " + linkMatch.Value;
+            }
+            return primary;
         }
     }
 
