@@ -304,7 +304,7 @@ public class VpsCommands : InteractionModuleBase
             var ws = new ClientWebSocket();
             var cancellationToken = new CancellationTokenSource(TimeSpan.FromMinutes(14));
 
-            var fullUrl = $"{url}?query={Uri.EscapeDataString(query)}&start={nanoSeconds}&limit=20";
+            var fullUrl = $"{url}?query={Uri.EscapeDataString(query)}&start={nanoSeconds}&limit=90";
             await ws.ConnectAsync(new Uri(fullUrl), cancellationToken.Token);
 
             // Button to stop following logs
