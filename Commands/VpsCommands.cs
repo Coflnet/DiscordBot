@@ -304,7 +304,7 @@ public class VpsCommands : InteractionModuleBase
             var ws = new ClientWebSocket();
             var cancellationToken = new CancellationTokenSource(TimeSpan.FromMinutes(14));
 
-            var fullUrl = $"{url}?query={Uri.EscapeDataString(query)}&start={nanoSeconds}&limit=90";
+            var fullUrl = $"{url}?query={Uri.EscapeDataString(query)}&start={nanoSeconds}&limit=60";
             await ws.ConnectAsync(new Uri(fullUrl), cancellationToken.Token);
 
             // Button to stop following logs
@@ -351,7 +351,7 @@ public class VpsCommands : InteractionModuleBase
 
         async Task HandlePaket(ClientWebSocket ws, CancellationTokenSource cancellationToken)
         {
-            var buffer = new byte[4096 * 16];
+            var buffer = new byte[4096 * 32];
             Queue<(long, string)> logReceived = new();
             while (ws.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
