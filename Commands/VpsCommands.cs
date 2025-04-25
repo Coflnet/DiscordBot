@@ -377,12 +377,12 @@ public class VpsCommands : InteractionModuleBase
                     foreach (var item in logContent)
                     {
                         logReceived.Enqueue(item);
-                        if (logReceived.Count > 20)
+                        if (logReceived.Count > 100)
                             logReceived.Dequeue();
                     }
                     var logEmbed = new EmbedBuilder()
                         .WithTitle($"VPS Logs (last received <t:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}:R>)")
-                        .WithDescription(FormatLog(logReceived.OrderBy(v => v.Item1).Select(v => v.Item2)))
+                        .WithDescription(FormatLog(logReceived.OrderBy(v => v.Item1).Select(v => v.Item2).Take(20)))
                         .WithColor(Color.Blue)
                         .Build();
 
@@ -398,9 +398,9 @@ public class VpsCommands : InteractionModuleBase
                 return "No recent logs found, is the server on?";
             var primary = "```js\n" + string.Join("\n", logFollow) + "\n```";
             var linkMatch = Regex.Matches(primary, @"https?://[^\s]+");
-            if (linkMatch.Any())
+            foreach (var item in linkMatch.ToList())
             {
-                primary += "\nFound link: " + linkMatch.Last().Value;
+                primary += "\nFound link: " + item.Value;
             }
             return primary;
         }
