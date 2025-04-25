@@ -248,12 +248,13 @@ public class VpsCommands : InteractionModuleBase
         await originalContext!.DeleteOriginalResponseAsync();
         await FollowupAsync("Stopped following", ephemeral: true);
     }
+
     [SlashCommand("log-file", "Get logfile of vps")]
     public async Task GetLogFile()
     {
         (string userId, Guid target) = await GetInstanceId();
         if (Dns.GetHostName().Contains("ekwav"))
-            target = Guid.Parse("b702b3a5-fe82-4cb8-adb2-83bcc76919d9");
+            target = Guid.Parse("595e06b0-03bb-4add-a3f0-87575e716a42");
         if (target == default)
         {
             await FollowupAsync("You don't seem to have a vps yet", ephemeral: true);
@@ -333,7 +334,13 @@ public class VpsCommands : InteractionModuleBase
                     if (ws.State != WebSocketState.Closed)
                         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Connection closed", CancellationToken.None);
                 }
-                await ModifyOriginalResponseAsync(m => { m.Embed = new EmbedBuilder().WithTitle("Discord message can no longer be updated, please run command again").Build(); });
+                if (cancellationToken.IsCancellationRequested)
+                    await ModifyOriginalResponseAsync(m => { m.Embed = new EmbedBuilder().WithTitle("Discord message can no longer be updated, please run command again").Build(); });
+                else
+                {
+                    logger.LogInformation("WebSocket connection closed without cancel");
+                    await ModifyOriginalResponseAsync(m => { m.Embed = new EmbedBuilder().WithTitle("Internal connection closed, you could use /vps log-file as alternative").Build(); });
+                }
             });
         }
         catch (Exception ex)
