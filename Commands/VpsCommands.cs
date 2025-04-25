@@ -351,7 +351,7 @@ public class VpsCommands : InteractionModuleBase
 
         async Task HandlePaket(ClientWebSocket ws, CancellationTokenSource cancellationToken)
         {
-            var buffer = new byte[4096 * 32];
+            var buffer = new byte[4096 * 64];
             Queue<(long, string)> logReceived = new();
             while (ws.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
