@@ -397,10 +397,10 @@ public class VpsCommands : InteractionModuleBase
             if (logFollow.Count() == 0)
                 return "No recent logs found, is the server on?";
             var primary = "```js\n" + string.Join("\n", logFollow) + "\n```";
-            var linkMatch = Regex.Match(primary, @"https?://[^\s]+");
-            if (linkMatch.Success)
+            var linkMatch = Regex.Matches(primary, @"https?://[^\s]+");
+            if (linkMatch.Any())
             {
-                primary += "\nFound link: " + linkMatch.Value;
+                primary += "\nFound link: " + linkMatch.Last().Value;
             }
             return primary;
         }
