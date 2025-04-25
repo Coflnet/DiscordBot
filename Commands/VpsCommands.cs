@@ -389,7 +389,7 @@ public class VpsCommands : InteractionModuleBase
                     await ModifyOriginalResponseAsync(m => { m.Embed = logEmbed; });
                 }
             }
-            logger.LogInformation("WebSocket connection closed");
+            logger.LogInformation("WebSocket connection closed reason: {reason} {httpResponseStatus}", ws.CloseStatus, ws.HttpStatusCode);
         }
 
         static string FormatLog(IEnumerable<string> logFollow)
