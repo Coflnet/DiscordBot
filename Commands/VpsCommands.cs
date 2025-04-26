@@ -335,11 +335,24 @@ public class VpsCommands : InteractionModuleBase
                         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Connection closed", CancellationToken.None);
                 }
                 if (cancellationToken.IsCancellationRequested)
-                    await ModifyOriginalResponseAsync(m => { m.Embed = new EmbedBuilder().WithTitle("Discord message can no longer be updated, please run command again").Build(); });
+                    await ModifyOriginalResponseAsync(m => { m.Embed = new EmbedBuilder()
+                        .WithTitle("Discord message can no longer be updated, please run command again").Build(); });
+                else if (ws.CloseStatus == WebSocketCloseStatus.InternalServerError)
+                {
+                    var log = await GetVpsLog(target, startTime.AddHours(-1), startTime, 40);
+                    await ModifyOriginalResponseAsync(m =>
+                    {
+                        m.Embed = new EmbedBuilder()
+                        .WithTitle("Could not follow logs, please run command again to update")
+                        .WithColor(Color.DarkOrange)
+                        .WithDescription(FormatLog(log)).Build();
+                    });
+                }
                 else
                 {
                     logger.LogInformation("WebSocket connection closed without cancel");
-                    await ModifyOriginalResponseAsync(m => { m.Embed = new EmbedBuilder().WithTitle("Internal connection closed, you could use /vps log-file as alternative").Build(); });
+                    await ModifyOriginalResponseAsync(m => { m.Embed = new EmbedBuilder()
+                        .WithTitle("Internal connection closed, you could use /vps log-file as alternative").Build(); });
                 }
             });
         }
