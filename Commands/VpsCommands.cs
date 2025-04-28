@@ -393,9 +393,10 @@ public class VpsCommands : InteractionModuleBase
                         if (logReceived.Count > 100)
                             logReceived.Dequeue();
                     }
+                    var newest20 = logReceived.OrderByDescending(v => v.Item1).Take(20).OrderBy(v => v.Item1).Select(v => v.Item2);
                     var logEmbed = new EmbedBuilder()
                         .WithTitle($"VPS Logs (last received <t:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}:R>)")
-                        .WithDescription(FormatLog(logReceived.OrderBy(v => v.Item1).Select(v => v.Item2).Take(20)))
+                        .WithDescription(FormatLog(newest20))
                         .WithColor(Color.Blue)
                         .Build();
 
