@@ -145,6 +145,8 @@ public class VpsCommands : InteractionModuleBase
         var desc = $"Instance id: `{target.Id.ToString()?.TakeLast(3).Aggregate("", (s, c) => s + c)}`\n" +
                    $"Expires: <t:{timestamp}> (in <t:{timestamp}:R>)\n" +
                    $"Kind: `{target.AppKind}`\n"; Console.WriteLine(desc);
+        if(target.PublicIp != null)
+            desc += $"Public IP (proxy): ||`{target.PublicIp.Split(':').First()}`||\n";
         return new EmbedBuilder()
             .WithTitle("VPS Info (page " + page + ")")
             .WithDescription(desc)
