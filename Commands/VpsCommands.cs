@@ -229,6 +229,25 @@ public class VpsCommands : InteractionModuleBase
         await FollowupAsync("Imported settings, take a look with /vps info", ephemeral: true);
     }
 
+    [SlashCommand("export", "Export vps settings as json")]
+    public async Task VpsExport()
+    {
+        (string userId, Guid target) = await GetInstanceId();
+        if (target == default)
+            return;
+        var result = await vpsApi.VpsUserInstanceIdExportGetAsync(userId, target);
+        if (!result.TryOk(out var content))
+        {
+            await PrintError(result);
+            return;
+        }
+        var userName = Context.User.Username;
+        var fileName = $"vps-settings-{userName}-{DateTime.UtcNow:yyyy-MM-dd-HH-mm}.json";
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
+        var attachment = new FileAttachment(stream, fileName);
+        await FollowupWithFileAsync(attachment, "VPS settings exported", ephemeral: true);
+    }
+
     [SlashCommand("stop", "Stop vps")]
     public async Task VpsStop()
     {
