@@ -254,7 +254,7 @@ public class VpsCommands : InteractionModuleBase
     {
         (string userId, Guid target) = await GetInstanceId();
         if (Dns.GetHostName().Contains("ekwav"))
-            target = Guid.Parse("595e06b0-03bb-4add-a3f0-87575e716a42");
+            target = Guid.Parse("a7341578-674a-4139-90e0-1d0b225b4663");
         if (target == default)
         {
             await FollowupAsync("You don't seem to have a vps yet", ephemeral: true);
@@ -264,11 +264,10 @@ public class VpsCommands : InteractionModuleBase
         var fullLog = new List<string>();
         for (int i = 0; i < 24; i++)
         {
-            var batch = (await GetVpsLog(target, startTime.AddHours(-i), startTime.AddHours(-i + 1), 5000)).ToList();
+            var batch = (await GetVpsLog(target, startTime.AddHours(-i), startTime.AddHours(-i + 1), 5000, true)).ToList();
             if (batch.Count() == 0)
                 continue;
             fullLog.InsertRange(0, batch);
-            fullLog.Insert(0, "Log export time: " + startTime.AddHours(-i).ToString("yyyy-MM-dd HH:mm:ss"));
             if (batch.Any(b => b.Contains("Trying to log into"))) // logged on start
                 break;
         }
@@ -335,8 +334,11 @@ public class VpsCommands : InteractionModuleBase
                         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Connection closed", CancellationToken.None);
                 }
                 if (cancellationToken.IsCancellationRequested)
-                    await ModifyOriginalResponseAsync(m => { m.Embed = new EmbedBuilder()
-                        .WithTitle("Discord message can no longer be updated, please run command again").Build(); });
+                    await ModifyOriginalResponseAsync(m =>
+                    {
+                        m.Embed = new EmbedBuilder()
+                        .WithTitle("Discord message can no longer be updated, please run command again").Build();
+                    });
                 else if (ws.CloseStatus == WebSocketCloseStatus.InternalServerError)
                 {
                     var log = await GetVpsLog(target, startTime.AddHours(-1), startTime, 40);
@@ -351,8 +353,11 @@ public class VpsCommands : InteractionModuleBase
                 else
                 {
                     logger.LogInformation("WebSocket connection closed without cancel");
-                    await ModifyOriginalResponseAsync(m => { m.Embed = new EmbedBuilder()
-                        .WithTitle("Internal connection closed, you could use /vps log-file as alternative").Build(); });
+                    await ModifyOriginalResponseAsync(m =>
+                    {
+                        m.Embed = new EmbedBuilder()
+                        .WithTitle("Internal connection closed, you could use /vps log-file as alternative").Build();
+                    });
                 }
             });
         }
@@ -465,15 +470,15 @@ public class VpsCommands : InteractionModuleBase
         return (profile, instance.First());
     }
 
-    internal async Task<IEnumerable<string>> GetVpsLog(Guid instance, DateTimeOffset from, DateTimeOffset to, int limit = 20)
+    internal async Task<IEnumerable<string>> GetVpsLog(Guid instance, DateTimeOffset from, DateTimeOffset to, int limit = 20, bool addTime = false)
     {
         var query = $"{{container=\"tpm-manager\", instance_id=\"{instance}\"}}";
         var start = from.ToUnixTimeSeconds();
         var end = to.ToUnixTimeSeconds();
-        return await QueryLoki(query, start, end, limit);
+        return await QueryLoki(query, start, end, limit, addTime);
     }
 
-    private async Task<IEnumerable<string>> QueryLoki(string query, long start, long end, int limit = 20)
+    private async Task<IEnumerable<string>> QueryLoki(string query, long start, long end, int limit = 20, bool addTime = false)
     {
         var client = new RestClient(configuration["LOKI_BASE_URL"]);
         var request = new RestRequest("loki/api/v1/query_range", RestSharp.Method.Get);
@@ -490,7 +495,7 @@ public class VpsCommands : InteractionModuleBase
             return Enumerable.Empty<string>();
         }
         var root = JsonConvert.DeserializeObject<Root>(response.Content);
-        return root.data.result.SelectMany(r => r.values).Select(v => v[1]).Reverse();
+        return root.data.result.SelectMany(r => r.values).Select(v => (addTime ? DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(v[0]) / 1000000).ToString("yyyy-MM-dd HH:mm:ss: "): "") + v[1]).Reverse();
     }
 
     public class Root
