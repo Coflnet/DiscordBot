@@ -183,6 +183,7 @@ public partial class VpsCommands
                 Setting = "igns",
                 Value = ign
             }));
+            await vpsApi.VpsUserInstanceIdTurnOnPostAsync(newInstance.OwnerId, newInstance.Id ?? default);
             await Task.Delay(3000);
             await ModifyOriginalResponseAsync(msg => msg.Content = "Configuring instance");
             for (int i = 0; i < 20; i++)
