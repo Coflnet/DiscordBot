@@ -54,6 +54,7 @@ public partial class VpsCommands
             {
                 (_, var targetId) = ComputeConnectionId(Context.User.Id.ToString(), Guid.NewGuid().ToString());
                 var link = GetAuthLink(targetId);
+                logger.LogInformation("User {user} not found, sending auth link {link} with id {id}", Context.User.Id, link, targetId);
                 message = await FollowupAsync($"You don't seem to have verified a minecraft account, use `/update-mc-user` or click [here to login via the website]({link})");
                 for (int i = 0; i < 180 / 5; i++)
                 {
@@ -70,6 +71,7 @@ public partial class VpsCommands
                         Attributes = new Dictionary<string, string>(),
                         AccountTier = AccountTier.NONE
                     };
+                    logger.LogInformation("User {user} found, saving account info {info}", Context.User.Id, JsonConvert.SerializeObject(accountInfo));
                     await persistence.SaveDiscordAccountInfo(accountInfo);
                     profile = accountInfo;
                 }
