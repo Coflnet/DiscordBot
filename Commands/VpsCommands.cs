@@ -17,6 +17,7 @@ using Newtonsoft.Json;
 using RestSharp;
 
 [Group("vps", "commands for Vps")]
+[DefaultMemberPermissions(GuildPermission.SendMessages)]
 public partial class VpsCommands : InteractionModuleBase
 {
     private readonly ILogger<VpsCommands> logger;
@@ -496,7 +497,7 @@ public partial class VpsCommands : InteractionModuleBase
         return (profile, instance.First());
     }
 
-    
+
 
     public class Stream
     {

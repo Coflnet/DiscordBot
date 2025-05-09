@@ -39,6 +39,7 @@ public partial class VpsCommands
         }
 
         [SlashCommand("tpm_plus", "Create a new vps")]
+        [DefaultMemberPermissions(GuildPermission.SendMessages)]
         public async Task VpsCreate([Autocomplete(typeof(McNameAutocompleteHandler))] string ign, ITextChannel? webHookChannel = null)
         {
             await DeferAsync(ephemeral: true);
