@@ -229,15 +229,17 @@ public partial class VpsCommands
                     var match = Regex.Match(item, $@"^(.*) logged in!$");
                     if (!match.Success)
                         continue;
-                    if(match.Groups[1].Value != ign)
+                    var foundIgn = match.Groups[1].Value;
+                    if (foundIgn != ign)
                     {
                         await ModifyOriginalResponseAsync(msg =>
                         {
-                            msg.Content = $"Logged in with another account ({match.Groups[1].Value}), please re-run the command with that username";
+                            msg.Content = $"Logged in with another account (`{foundIgn}`), please re-run the command with that username";
                             msg.Embed = new EmbedBuilder()
                             {
                                 Title = "Logged in with another account",
-                                Description = $"Your instance is ready to use, but you logged in with {match.Groups[1].Value} instead of {ign}, please re-run the command with that username",
+                                Description = $"Your instance is ready to use, but you logged in with {foundIgn} instead of **{ign}**, please re-run the command with that username.\n"
+                                + $"`/vps create tpm_plus ign:{foundIgn}`",
                                 Color = Color.Red
                             }.Build();
                         });
