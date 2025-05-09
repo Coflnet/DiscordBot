@@ -57,7 +57,9 @@ public partial class VpsCommands
                 (_, var targetId) = ComputeConnectionId(Context.User.Id.ToString(), Guid.NewGuid().ToString());
                 var link = GetAuthLink(targetId);
                 logger.LogInformation("User {user} not found, sending auth link {link} with id {id}", Context.User.Id, link, targetId);
-                message = await FollowupAsync($"You don't seem to have verified a minecraft account, use `/update-mc-user` or click [here to login via the website]({link})");
+                var button = new ComponentBuilder()
+                    .WithButton("Click to login via website", link, ButtonStyle.Link).Build();
+                message = await FollowupAsync($"You don't seem to have verified a minecraft account, use `/update-mc-user` or click [here to login via the website]({link})", ephemeral: true, components: button);
                 for (int i = 0; i < 180 / 5; i++)
                 {
                     await Task.Delay(5000);
