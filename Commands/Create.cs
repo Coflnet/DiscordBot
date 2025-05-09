@@ -103,9 +103,25 @@ public partial class VpsCommands
                     return;
                 }
                 if (instance.First().PaidUntil > DateTime.UtcNow)
-                    await ModifyOriginalResponseAsync(msg => msg.Content = "You already have an instance running, having multiple is not supported yet");
+                    await ModifyOriginalResponseAsync(msg =>
+                    {
+                        msg.Content = "You already have an instance running";
+                        msg.Embed = new EmbedBuilder()
+                        {
+                            Title = "Instance already running",
+                            Description = $"You already have an instance running, having multiple is not supported\n"
+                            + $"Use the other `/vps` commands to manage your instance",
+                            Color = Color.Green
+                        }.Build();
+                    });
                 else
-                    await ModifyOriginalResponseAsync(msg => msg.Content = "Your test time has expired, please extend your instance with `/vps info`");
+                    await ModifyOriginalResponseAsync(msg =>
+                    {
+                        msg.Content = "Your vps has expired, please extend your instance with `/vps info`";
+                        msg.Components = new ComponentBuilder()
+                            .WithButton("Extend 30 days (Costs CoflCoins)", "renew-vps", ButtonStyle.Primary)
+                            .Build();
+                    });
                 return;
             }
             await ModifyOriginalResponseAsync(msg => msg.Content = "Creating instance, please wait");
