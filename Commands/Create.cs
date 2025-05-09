@@ -65,7 +65,7 @@ public partial class VpsCommands
                     var accountInfo = new DiscordAccountInfo()
                     {
                         DiscordId = Context.User.Id,
-                        UserId = settingsId.Trim('"'),
+                        UserId = settingsId.Trim('"', '\\'),
                         MinecraftUuid = Guid.Empty,
                         MinecraftName = null,
                         Attributes = new Dictionary<string, string>(),
@@ -74,6 +74,7 @@ public partial class VpsCommands
                     logger.LogInformation("User {user} found, saving account info {info}", Context.User.Id, JsonConvert.SerializeObject(accountInfo));
                     await persistence.SaveDiscordAccountInfo(accountInfo);
                     profile = accountInfo;
+                    break;
                 }
                 if (profile == null)
                 {
