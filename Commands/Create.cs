@@ -226,9 +226,23 @@ public partial class VpsCommands
                 var lines = await lokiQuery.GetVpsLog(newInstance.Id ?? default, DateTimeOffset.Now.AddMinutes(-5), DateTimeOffset.Now, 100);
                 foreach (var item in lines)
                 {
-                    var match = Regex.Match(item, $@"^{ign} logged in!$");
+                    var match = Regex.Match(item, $@"^(.*) logged in!$");
                     if (!match.Success)
                         continue;
+                    if(match.Groups[1].Value != ign)
+                    {
+                        await ModifyOriginalResponseAsync(msg =>
+                        {
+                            msg.Content = $"Logged in with another account ({match.Groups[1].Value}), please re-run the command with that username";
+                            msg.Embed = new EmbedBuilder()
+                            {
+                                Title = "Logged in with another account",
+                                Description = $"Your instance is ready to use, but you logged in with {match.Groups[1].Value} instead of {ign}, please re-run the command with that username",
+                                Color = Color.Red
+                            }.Build();
+                        });
+                        return false;
+                    }
                     var button = new ComponentBuilder()
                         .WithButton("Edit filters", style: ButtonStyle.Link, url: "https://sky.coflnet.com/flipper")
                         .WithButton("Extend 30 days (Costs CoflCoins)", "renew-vps", ButtonStyle.Primary);
