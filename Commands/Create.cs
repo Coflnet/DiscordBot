@@ -230,10 +230,16 @@ public partial class VpsCommands
                         continue;
                     var button = new ComponentBuilder()
                         .WithButton("Edit filters", style: ButtonStyle.Link, url: "https://sky.coflnet.com/flipper")
-                        .WithButton("Renew 30 days (Costs CoflCoins)", "renew-vps", ButtonStyle.Primary);
+                        .WithButton("Extend 30 days (Costs CoflCoins)", "renew-vps", ButtonStyle.Primary);
                     await ModifyOriginalResponseAsync(msg =>
                     {
                         msg.Content = "Setup completed!";
+                        msg.Embed = new EmbedBuilder()
+                        {
+                            Title = "Setup completed",
+                            Description = $"Your instance is ready to use, you can now use `/vps info` and `/vps log`",
+                            Color = Color.Green
+                        }.Build();
                         msg.Components = button.Build();
                     });
                     var userInfo = await persistence.GetDiscordAccountInfo(Context.User.Id);
@@ -245,7 +251,7 @@ public partial class VpsCommands
                     userInfo.MinecraftUuids ??= new();
                     userInfo.MinecraftUuids.Add(Guid.Parse(search.First().Uuid));
                     await persistence.SaveDiscordAccountInfo(userInfo);
-                    i = 20;
+                    return true;
                 }
                 await Task.Delay(6000);
                 if (i == 19)
@@ -257,7 +263,7 @@ public partial class VpsCommands
                     await ModifyOriginalResponseAsync(msg => msg.Content = (i >= 10 ? "still " : "") + "Waiting for login confirmation");
             }
 
-            return true;
+            return false;
         }
 
         public virtual string GetAuthLink(string stringId)

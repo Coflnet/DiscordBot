@@ -184,17 +184,19 @@ public partial class VpsCommands : InteractionModuleBase
     public async Task RenewVps()
     {
         var originalContext = Context.Interaction as SocketMessageComponent;
-        await originalContext!.UpdateAsync(a => { a.Embed = new EmbedBuilder().WithTitle("Renewing VPS").WithDescription("Please check your DMs").Build(); });
+        await originalContext!.UpdateAsync(a => { a.Embed = new EmbedBuilder().WithTitle("Trying to renew/extend VPS").Build(); });
         var (user, instance) = await GetInstance();
         if (instance == default)
             return;
         var result = await vpsApi.VpsUserInstanceIdExtendPostAsync(user.UserId, instance.Id!.Value);
-        if (!result.IsOk)
+        if (!result.TryOk(out var content))
         {
             await PrintError(result);
             return;
         }
-        await FollowupAsync("Renewed VPS", ephemeral: true);
+        var time = content.PaidUntil!.Value;
+        var timestamp = new DateTimeOffset(time).ToUnixTimeSeconds();
+        await FollowupAsync($"Renewed VPS, its now paid until <t:{timestamp}>", ephemeral: true);
     }
 
     [SlashCommand("start", "Start vps")]
