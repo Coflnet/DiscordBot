@@ -496,17 +496,4 @@ public partial class VpsCommands : InteractionModuleBase
 
         return (profile, instance.First());
     }
-
-
-
-    public class Stream
-    {
-        [JsonPropertyName("container")]
-        public string container { get; set; }
-
-        [JsonPropertyName("instance_id")]
-        public string instance_id { get; set; }
-        [JsonPropertyName("user_id")]
-        public string user_id { get; set; }
-    }
 }

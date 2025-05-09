@@ -62,9 +62,20 @@ public class LokiQuery
     public class Result
     {
         [JsonPropertyName("stream")]
-        public Stream stream { get; set; }
+        public StreamResponse stream { get; set; }
 
         [JsonPropertyName("values")]
         public string[][] values { get; set; }
+    }
+
+    public class StreamResponse
+    {
+        [JsonPropertyName("container")]
+        public string container { get; set; }
+
+        [JsonPropertyName("instance_id")]
+        public string instance_id { get; set; }
+        [JsonPropertyName("user_id")]
+        public string user_id { get; set; }
     }
 }
