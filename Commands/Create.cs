@@ -58,7 +58,7 @@ public partial class VpsCommands
                 var link = GetAuthLink(targetId);
                 logger.LogInformation("User {user} not found, sending auth link {link} with id {id}", Context.User.Id, link, targetId);
                 var button = new ComponentBuilder()
-                    .WithButton("Click to login via website", link, ButtonStyle.Link).Build();
+                    .WithButton("Click to login via website", style: ButtonStyle.Link, url: link).Build();
                 message = await FollowupAsync($"You don't seem to have verified a minecraft account, use `/update-mc-user` or click [here to login via the website]({link})", ephemeral: true, components: button);
                 for (int i = 0; i < 180 / 5; i++)
                 {
@@ -201,7 +201,7 @@ public partial class VpsCommands
                         continue;
                     var link = match.Groups[1].Value;
                     var button = new ComponentBuilder()
-                        .WithButton("Click here to login with microsoft", link, ButtonStyle.Link);
+                        .WithButton("Click here to login with microsoft", style: ButtonStyle.Link, url: link);
                     await ModifyOriginalResponseAsync(msg =>
                     {
                         msg.Content = "Started your instance";
@@ -229,7 +229,7 @@ public partial class VpsCommands
                     if (!match.Success)
                         continue;
                     var button = new ComponentBuilder()
-                        .WithButton("Edit filters", "https://sky.coflnet.com/flipper", ButtonStyle.Link)
+                        .WithButton("Edit filters", style: ButtonStyle.Link, url: "https://sky.coflnet.com/flipper")
                         .WithButton("Renew 30 days (Costs CoflCoins)", "renew-vps", ButtonStyle.Primary);
                     await ModifyOriginalResponseAsync(msg =>
                     {
