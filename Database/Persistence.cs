@@ -50,6 +50,7 @@ public class Persistence
     public async Task SaveDiscordAccountInfo(DiscordAccountInfo info)
     {
         await discordAccountInfo.Insert(info).ExecuteAsync();
-        await byMcUuid.Insert(info).ExecuteAsync();
+        if (info.MinecraftUuid != Guid.Empty)
+            await byMcUuid.Insert(info).ExecuteAsync();
     }
 }

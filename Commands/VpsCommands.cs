@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using Coflnet.Core;
 using Coflnet.Sky.ModCommands.Client.Api;
 using Coflnet.Sky.ModCommands.Client.Model;
+using Coflnet.Sky.Settings.Client.Api;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
@@ -16,20 +17,24 @@ using Newtonsoft.Json;
 using RestSharp;
 
 [Group("vps", "commands for Vps")]
-public class VpsCommands : InteractionModuleBase
+public partial class VpsCommands : InteractionModuleBase
 {
-    private readonly IVpsApi vpsApi;
     private readonly ILogger<VpsCommands> logger;
-    private readonly Persistence persistence;
     private readonly IConfiguration configuration;
+    private readonly IVpsApi vpsApi;
+    private readonly Persistence persistence;
+    private readonly ISettingsApi settingsApi;
+    private readonly LokiQuery lokiQuery;
 
-    public VpsCommands(IVpsApi vpsApi, ILogger<VpsCommands> logger, Persistence persistence, IConfiguration configuration)
+    public VpsCommands(IVpsApi vpsApi, ILogger<VpsCommands> logger, Persistence persistence, IConfiguration configuration, LokiQuery lokiQuery)
     {
         this.vpsApi = vpsApi;
         this.logger = logger;
         this.persistence = persistence;
         this.configuration = configuration;
+        this.lokiQuery = lokiQuery;
     }
+
 
     [SlashCommand("set", "Update a vps setting")]
     public async Task VpsCommand([Autocomplete] string setting, string? value = null)
@@ -145,7 +150,7 @@ public class VpsCommands : InteractionModuleBase
         var desc = $"Instance id: `{target.Id.ToString()?.TakeLast(3).Aggregate("", (s, c) => s + c)}`\n" +
                    $"Expires: <t:{timestamp}> (in <t:{timestamp}:R>)\n" +
                    $"Kind: `{target.AppKind}`\n"; Console.WriteLine(desc);
-        if(target.PublicIp != null)
+        if (target.PublicIp != null)
             desc += $"Public IP (proxy): ||`{target.PublicIp.Split(':').First()}`||\n";
         return new EmbedBuilder()
             .WithTitle("VPS Info (page " + page + ")")
@@ -285,7 +290,7 @@ public class VpsCommands : InteractionModuleBase
         var fullLog = new List<string>();
         for (int i = 0; i < 24; i++)
         {
-            var batch = (await GetVpsLog(target, startTime.AddHours(-i), startTime.AddHours(-i + 1), 5000, true)).ToList();
+            var batch = (await lokiQuery.GetVpsLog(target, startTime.AddHours(-i), startTime.AddHours(-i + 1), 5000, true)).ToList();
             if (batch.Count() == 0)
                 continue;
             fullLog.InsertRange(0, batch);
@@ -362,7 +367,7 @@ public class VpsCommands : InteractionModuleBase
                     });
                 else if (ws.CloseStatus == WebSocketCloseStatus.InternalServerError)
                 {
-                    var log = await GetVpsLog(target, startTime.AddHours(-1), startTime, 40);
+                    var log = await lokiQuery.GetVpsLog(target, startTime.AddHours(-1), startTime, 40);
                     await ModifyOriginalResponseAsync(m =>
                     {
                         m.Embed = new EmbedBuilder()
@@ -491,57 +496,7 @@ public class VpsCommands : InteractionModuleBase
         return (profile, instance.First());
     }
 
-    internal async Task<IEnumerable<string>> GetVpsLog(Guid instance, DateTimeOffset from, DateTimeOffset to, int limit = 20, bool addTime = false)
-    {
-        var query = $"{{container=\"tpm-manager\", instance_id=\"{instance}\"}}";
-        var start = from.ToUnixTimeSeconds();
-        var end = to.ToUnixTimeSeconds();
-        return await QueryLoki(query, start, end, limit, addTime);
-    }
-
-    private async Task<IEnumerable<string>> QueryLoki(string query, long start, long end, int limit = 20, bool addTime = false)
-    {
-        var client = new RestClient(configuration["LOKI_BASE_URL"]);
-        var request = new RestRequest("loki/api/v1/query_range", RestSharp.Method.Get);
-        request.AddQueryParameter("query", query);
-        request.AddQueryParameter("start", start);
-        request.AddQueryParameter("end", end);
-        request.AddQueryParameter("limit", limit);
-        var response = await client.ExecuteAsync(request);
-        logger.LogInformation($"Querying loki with {client.BuildUri(request)}");
-        if (!response.IsSuccessful)
-        {
-            logger.LogError($"Failed to query loki: {response.Content}");
-            await FollowupAsync($"Failed to get logs, sorry please let Äkwav know", ephemeral: true);
-            return Enumerable.Empty<string>();
-        }
-        var root = JsonConvert.DeserializeObject<Root>(response.Content);
-        return root.data.result.SelectMany(r => r.values).Select(v => (addTime ? DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(v[0]) / 1000000).ToString("yyyy-MM-dd HH:mm:ss: "): "") + v[1]).Reverse();
-    }
-
-    public class Root
-    {
-        [JsonPropertyName("status")]
-        public string status { get; set; }
-
-        [JsonPropertyName("data")]
-        public Data data { get; set; }
-    }
-
-    public class Data
-    {
-        [JsonPropertyName("result")]
-        public Result[] result { get; set; }
-    }
-
-    public class Result
-    {
-        [JsonPropertyName("stream")]
-        public Stream stream { get; set; }
-
-        [JsonPropertyName("values")]
-        public string[][] values { get; set; }
-    }
+    
 
     public class Stream
     {

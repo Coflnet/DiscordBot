@@ -67,7 +67,7 @@ public class Commands : InteractionModuleBase
 
     [SlashCommand("update-mc-user", "Request an update to Minecraft user via hypixel profile", true)]
     [DefaultMemberPermissions(GuildPermission.SendMessages)]
-    public async Task UpdateMcUser([Summary("name", "Minecraft user name"), Autocomplete] string userName)
+    public async Task UpdateMcUser([Summary("name", "Minecraft user name"), Autocomplete(typeof(McNameAutocompleteHandler))] string userName)
     {
         await DeferAsync(ephemeral: true);
         var user = (await searchApi.ApiSearchPlayerPlayerNameGetAsync(userName)).First();
@@ -282,7 +282,7 @@ public class Commands : InteractionModuleBase
 
     private bool DoesNotMatchExecutor(ProfileClient.HypixelProfile profile)
     {
-        return profile.SocialMedia?.Links.Where(l => l.Key.ToLower() == "discord").FirstOrDefault().Value != Context.Interaction.User.Username;
+        return profile?.SocialMedia?.Links.Where(l => l.Key.ToLower() == "discord").FirstOrDefault().Value != Context.Interaction.User.Username;
     }
 
     [MessageCommand("Mute for rule 1")]
@@ -323,21 +323,5 @@ public class Commands : InteractionModuleBase
     public async Task MuteForRule2(IMessage message)
     {
         await ExecuteMute(message, 2);
-    }
-
-    [AutocompleteCommand("name", "update-mc-user")]
-    public async Task Autocomplete()
-    {
-        logger.LogInformation("Searching players ");
-        string userInput = (Context.Interaction as SocketAutocompleteInteraction).Data.Current.Value.ToString();
-        if (string.IsNullOrEmpty(userInput))
-        {
-            await (Context.Interaction as SocketAutocompleteInteraction).RespondAsync(new AutocompleteResult[] { new AutocompleteResult("Technoblade", "b876ec32e396476ba1158438d83c67d4") });
-            return;
-        }
-        var apiResult = await searchApi.ApiSearchPlayerPlayerNameGetAsync(userInput);
-        IEnumerable<AutocompleteResult> results = apiResult.Select(a => new AutocompleteResult(a.Name, a.Uuid));
-
-        await (Context.Interaction as SocketAutocompleteInteraction).RespondAsync(results.Take(25));
     }
 }
