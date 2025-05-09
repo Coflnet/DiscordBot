@@ -49,6 +49,8 @@ public partial class VpsCommands
                 ign = playerSearch.First().Name;
             }
             var profile = await persistence.GetDiscordAccountInfo(Context.User.Id);
+            if (profile?.UserId.Contains('\\') ?? false)
+                profile = null;// ignore broken accounts
             IUserMessage message = null;
             if (profile == null)
             {
