@@ -184,6 +184,31 @@ public partial class VpsCommands : InteractionModuleBase
     public async Task RenewVps()
     {
         var originalContext = Context.Interaction as SocketMessageComponent;
+        var (user, instance) = await GetInstance();
+        var confirmButton = new ComponentBuilder()
+            .WithButton("Confirm Renewal", "confirm-renew-vps", ButtonStyle.Success)
+            .WithButton("Cancel", "cancel-renew-vps", ButtonStyle.Danger)
+            .Build();
+        await originalContext!.UpdateAsync(a =>
+        {
+            var price = instance.AppKind switch
+            {
+                "tpm+" => 5100,
+                _ => 2700
+            };
+            a.Embed = new EmbedBuilder()
+                .WithTitle("Renew VPS")
+                .WithDescription($"Are you sure you want to renew the VPS? This will cost `{price::N0}` CoflCoins.")
+                .WithColor(Color.Blue)
+                .Build();
+            a.Components = confirmButton;
+        });
+
+    }
+    [ComponentInteraction("confirm-renew-vps", true)]
+    public async Task ConfirmRenewVps()
+    {
+        var originalContext = Context.Interaction as SocketMessageComponent;
         await originalContext!.UpdateAsync(a => { a.Embed = new EmbedBuilder().WithTitle("Trying to renew/extend VPS").Build(); });
         var (user, instance) = await GetInstance();
         if (instance == default)
@@ -196,7 +221,31 @@ public partial class VpsCommands : InteractionModuleBase
         }
         var time = content.PaidUntil!.Value;
         var timestamp = new DateTimeOffset(time).ToUnixTimeSeconds();
-        await FollowupAsync($"Renewed VPS, its now paid until <t:{timestamp}>", ephemeral: true);
+        await originalContext.UpdateAsync(a =>
+        {
+            a.Embed = new EmbedBuilder()
+                .WithTitle("Renewed VPS")
+                .WithDescription($"VPS is now paid for until <t:{timestamp}> (in <t:{timestamp}:R>)")
+                .WithColor(Color.Green)
+                .Build();
+            a.Components = new ComponentBuilder()
+                .WithButton("Show info page", "setting-page1", ButtonStyle.Secondary)
+                .Build();
+        });
+    }
+
+    [ComponentInteraction("cancel-renew-vps", true)]
+    public async Task CancelRenewVps()
+    {
+        var originalContext = Context.Interaction as SocketMessageComponent;
+        var component = new ComponentBuilder()
+            .WithButton("Extend/Renew", "renew-vps", ButtonStyle.Primary)
+            .Build();
+        await originalContext!.UpdateAsync(a =>
+        {
+            a.Embed = new EmbedBuilder().WithTitle("Canceled renewal").Build();
+            a.Components = component;
+        });
     }
 
     [SlashCommand("start", "Start vps")]
