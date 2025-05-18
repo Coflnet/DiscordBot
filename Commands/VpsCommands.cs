@@ -197,7 +197,7 @@ public partial class VpsCommands : InteractionModuleBase
             };
             a.Embed = new EmbedBuilder()
                 .WithTitle("Renew VPS")
-                .WithDescription($"Are you sure you want to renew the VPS? This will cost `{price::N0}` CoflCoins.")
+                .WithDescription($"Are you sure you want to renew the VPS{(string.IsNullOrWhiteSpace(instance.AppKind) ? "" : $" running `{instance.AppKind}`")}? This will cost `{price:N0}` CoflCoins.")
                 .WithColor(Color.Blue)
                 .Build();
             a.Components = confirmButton;
