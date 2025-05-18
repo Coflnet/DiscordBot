@@ -66,7 +66,6 @@ public class Commands : InteractionModuleBase
     }
 
     [SlashCommand("update-mc-user", "Request an update to Minecraft user via hypixel profile", true)]
-    [DefaultMemberPermissions(GuildPermission.SendMessages)]
     public async Task UpdateMcUser([Summary("name", "Minecraft user name"), Autocomplete(typeof(McNameAutocompleteHandler))] string userName)
     {
         await DeferAsync(ephemeral: true);
@@ -107,7 +106,6 @@ public class Commands : InteractionModuleBase
     }
 
     [SlashCommand("run", "Run a command as one of your minecraft accounts", true)]
-    [DefaultMemberPermissions(GuildPermission.SendMessages)]
     public async Task RunCommand([Summary("command", "The command to run")] string command, [Summary("player", "Command to run"), Autocomplete,] string playerName)
     {
         await DeferAsync(ephemeral: true);
