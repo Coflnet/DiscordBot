@@ -155,6 +155,7 @@ public class Commands : InteractionModuleBase
         {
             return;
         }
+        logger.LogInformation("User {userId} requested transactions of {user}", Context.User.GlobalName, userId);
         var transactions = await transactionApi.TransactionUUserIdGetAsync(userId, 0, 10);
         await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
             .WithTitle("Transactions for " + userId)
