@@ -192,6 +192,7 @@ public class Commands : InteractionModuleBase
             ProductId = "compensation",
             Reference = reason
         });
+        logger.LogInformation("User {userId} ({id}) compensated {user} with {amount} by {executor}", Context.User.GlobalName, Context.User.Id, userId, parsedAmount, Context.User.Id);
         await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
             .WithTitle("Compensated " + userId)
             .WithDescription($"Compensated {userId} with {parsedAmount} - {reason}")
