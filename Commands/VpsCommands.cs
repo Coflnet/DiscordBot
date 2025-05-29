@@ -293,6 +293,10 @@ public partial class VpsCommands : InteractionModuleBase
                                 .WithButton("Show Log", "show-log", ButtonStyle.Primary)
                                 .Build();
                         });
+                await Task.Delay(10000);
+                lines = await lokiQuery.GetVpsLog(target, DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow, 30);
+                foreach (var line in lines) // make sure user is logged in
+                    await CheckForLoginLink(line ?? "");
                 return;
             }
         }
@@ -529,12 +533,7 @@ public partial class VpsCommands : InteractionModuleBase
                     logReceived.Enqueue(line);
                     if (logReceived.Count > 100)
                         logReceived.Dequeue();
-                    var hasLoginLink = Regex.Match(line.Item2, @"^\[Coflnet\]: Please click (https?://[^\s]+) to login$");
-                    if (hasLoginLink.Success)
-                    {
-                        await LoginImplicitly(hasLoginLink);
-                        return;
-                    }
+                    await CheckForLoginLink(line.Item2);
                 }
                 var newest20 = logReceived.OrderByDescending(v => v.Item1).Take(20).OrderBy(v => v.Item1).Select(v => v.Item2);
                 var logEmbed = new EmbedBuilder()
@@ -559,6 +558,15 @@ public partial class VpsCommands : InteractionModuleBase
                 primary += "\nFound link: " + item.Value;
             }
             return primary;
+        }
+    }
+
+    private async Task CheckForLoginLink(string line)
+    {
+        var hasLoginLink = Regex.Match(line, @"^\[Coflnet\]: Please click (https?://[^\s]+) to login$");
+        if (hasLoginLink.Success)
+        {
+            await LoginImplicitly(hasLoginLink);
         }
     }
 
