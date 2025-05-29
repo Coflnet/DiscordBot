@@ -624,7 +624,7 @@ public partial class VpsCommands : InteractionModuleBase
             return;
         }
         logger.LogInformation("Logging in user {userId} with connection id {connectionId}", profile.UserId, urldecoded);
-        await settingsApi.SettingsUpdateSettingAsync(urldecoded, "userId", profile.UserId.ToString());
+        await settingsApi.SettingsUpdateSettingAsync(urldecoded, "userId", JsonConvert.SerializeObject(JsonConvert.SerializeObject(profile.UserId.ToString())));
     }
 
     // Add class to deserialize WebSocket responses
