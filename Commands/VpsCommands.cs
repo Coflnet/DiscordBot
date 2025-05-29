@@ -264,12 +264,12 @@ public partial class VpsCommands : InteractionModuleBase
         for (int i = 0; i < 20; i++)
         {
             await Task.Delay(3000);
-            var lines = await lokiQuery.GetVpsLog(target, DateTimeOffset.Now.AddMinutes(-2), DateTimeOffset.Now, 30);
+            var lines = await lokiQuery.GetVpsLog(target, DateTimeOffset.UtcNow.AddMinutes(i == 0 ? -65 : -2), DateTimeOffset.UtcNow, 30);
             foreach (var item in lines)
             {
                 if (item.Contains("https://www.microsoft.com/link"))
                 {
-                    var loginMatch = Regex.Match(item, @"https://www.microsoft.com/link/([a-zA-Z0-9]+)");
+                    var loginMatch = Regex.Match(item, @"http:\/\/microsoft.com\/link\?otc=[a-zA-Z0-9]+");
                     if (loginMatch.Success)
                     {
                         await ModifyOriginalResponseAsync(msg =>
@@ -279,7 +279,8 @@ public partial class VpsCommands : InteractionModuleBase
                                 .WithButton("Login with Microsoft", url: loginMatch.Groups[0].Value, style: ButtonStyle.Link)
                                 .Build();
                         });
-                        return;
+                        await Task.Delay(10000);
+                        continue;
                     }
                 }
                 var match = Regex.Match(item, $@"^(.*) logged in!$");
