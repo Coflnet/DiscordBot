@@ -502,25 +502,32 @@ public partial class VpsCommands : InteractionModuleBase
                 logger.LogInformation("Received message: {message}", message);
                 var logEntry = JsonConvert.DeserializeObject<LogStreamResponse>(message);
 
-                if (logEntry?.streams?.FirstOrDefault()?.values?.Any() == true)
+                if ((logEntry?.streams?.FirstOrDefault()?.values?.Any()) != true)
                 {
-                    var logContent = logEntry.streams.SelectMany(s => s.values.Select(v => (long.Parse(v[0]), v[1]))).OrderBy(v => v.Item1).ToList();
-
-                    foreach (var item in logContent)
-                    {
-                        logReceived.Enqueue(item);
-                        if (logReceived.Count > 100)
-                            logReceived.Dequeue();
-                    }
-                    var newest20 = logReceived.OrderByDescending(v => v.Item1).Take(20).OrderBy(v => v.Item1).Select(v => v.Item2);
-                    var logEmbed = new EmbedBuilder()
-                        .WithTitle($"VPS Logs (last received <t:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}:R>)")
-                        .WithDescription(FormatLog(newest20))
-                        .WithColor(Color.Blue)
-                        .Build();
-
-                    await ModifyOriginalResponseAsync(m => { m.Embed = logEmbed; });
+                    continue;
                 }
+                var logContent = logEntry.streams.SelectMany(s => s.values.Select(v => (long.Parse(v[0]), v[1]))).OrderBy(v => v.Item1).ToList();
+
+                foreach (var line in logContent)
+                {
+                    logReceived.Enqueue(line);
+                    if (logReceived.Count > 100)
+                        logReceived.Dequeue();
+                    var hasLoginLink = Regex.Match(line.Item2, @"^\[Coflnet\]: Please click (https?://[^\s]+) to login$");
+                    if (hasLoginLink.Success)
+                    {
+                        await LoginImplicitly(hasLoginLink);
+                        return;
+                    }
+                }
+                var newest20 = logReceived.OrderByDescending(v => v.Item1).Take(20).OrderBy(v => v.Item1).Select(v => v.Item2);
+                var logEmbed = new EmbedBuilder()
+                    .WithTitle($"VPS Logs (last received <t:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}:R>)")
+                    .WithDescription(FormatLog(newest20))
+                    .WithColor(Color.Blue)
+                    .Build();
+
+                await ModifyOriginalResponseAsync(m => { m.Embed = logEmbed; });
             }
             logger.LogInformation("WebSocket connection closed reason: {reason} {httpResponseStatus}", ws.CloseStatus, ws.HttpStatusCode);
         }
@@ -537,6 +544,55 @@ public partial class VpsCommands : InteractionModuleBase
             }
             return primary;
         }
+    }
+
+    private async Task LoginImplicitly(Match hasLoginLink)
+    {
+        var loginId = hasLoginLink.Groups[1].Value.Split("conId=").Last();
+        var urldecoded = WebUtility.UrlDecode(loginId);
+        byte[] idBytes;
+        try
+        {
+            idBytes = Convert.FromBase64String(urldecoded);
+        }
+        catch (Exception e)
+        {
+            try
+            {
+                idBytes = Convert.FromBase64String(urldecoded + "=");
+            }
+            catch (Exception)
+            {
+                logger.LogError(e, "Failed to decode connection id");
+                return;
+            }
+        }
+        if (idBytes.Length < 16)
+        {
+            logger.LogError("Invalid connection id length: {length}", idBytes.Length);
+            return;
+        }
+        if (idBytes.Length == 17)
+        {
+            // check checksum
+            var checksum = idBytes[16];
+            var sum = 0;
+            for (int i = 0; i < 16; i++)
+            {
+                sum += idBytes[i];
+            }
+            if (sum % 256 != checksum)
+                throw new ApiException("invalid_id", "The passed connection id is invalid, please get the link from minecraft again");
+            urldecoded = Convert.ToBase64String(idBytes, 0, 16);
+        }
+
+        var profile = await persistence.GetDiscordAccountInfo(Context.User.Id);
+        if (profile?.UserId == null)
+        {
+            await FollowupAsync("Failed to log you in automatically", ephemeral: true);
+            return;
+        }
+        await settingsApi.SettingsUpdateSettingAsync(urldecoded, "userId", profile.UserId.ToString());
     }
 
     // Add class to deserialize WebSocket responses
