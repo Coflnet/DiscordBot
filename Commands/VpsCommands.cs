@@ -260,6 +260,26 @@ public partial class VpsCommands : InteractionModuleBase
             return;
         }
         await FollowupAsync("Starting instance", ephemeral: true);
+
+        for (int i = 0; i < 20; i++)
+        {
+            await Task.Delay(3000);
+            var lines = await lokiQuery.GetVpsLog(target, DateTimeOffset.Now.AddMinutes(-2), DateTimeOffset.Now, 30);
+            foreach (var item in lines)
+            {
+                var match = Regex.Match(item, $@"^(.*) logged in!$");
+                if (!match.Success)
+                    continue;
+                await ModifyOriginalResponseAsync(msg =>
+                        {
+                            msg.Content = $"Started and logged in as `{match.Groups[1].Value}`";
+                            msg.Components = new ComponentBuilder()
+                                .WithButton("Show Log", "show-log", ButtonStyle.Primary)
+                                .Build();
+                        });
+                return;
+            }
+        }
     }
 
     [SlashCommand("import", "Import json vps settings, eg from TPM")]
@@ -326,6 +346,18 @@ public partial class VpsCommands : InteractionModuleBase
         await FollowupAsync("Stopped following", ephemeral: true);
     }
 
+    [ComponentInteraction("show-log")]
+    public async Task ShowLog()
+    {
+        (string userId, Guid target) = await GetInstanceId();
+        if (target == default)
+        {
+            await FollowupAsync("You don't seem to have a vps yet", ephemeral: true);
+            return;
+        }
+        await DisplayLog(target);
+    }
+
     [SlashCommand("log-file", "Get logfile of vps")]
     public async Task GetLogFile()
     {
@@ -369,6 +401,11 @@ public partial class VpsCommands : InteractionModuleBase
             await FollowupAsync("You don't seem to have a vps yet", ephemeral: true);
             return;
         }
+        await DisplayLog(target);
+    }
+
+    private async Task DisplayLog(Guid target)
+    {
         var startTime = DateTimeOffset.UtcNow;
 
         var nanoSeconds = (startTime - TimeSpan.FromDays(1)).ToUnixTimeMilliseconds() * 1_000_000;
