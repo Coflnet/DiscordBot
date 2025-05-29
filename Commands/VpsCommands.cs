@@ -571,9 +571,17 @@ public partial class VpsCommands : InteractionModuleBase
     private async Task CheckForLoginLink(string line)
     {
         var hasLoginLink = Regex.Match(line, @"^\[Coflnet\]:  ?Please click (https?:\/\/[^\s]+) to login ?$");
-        if (hasLoginLink.Success)
+        if (!hasLoginLink.Success)
+        {
+            return;
+        }
+        try
         {
             await LoginImplicitly(hasLoginLink);
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Failed to login implicitly with connection id");
         }
     }
 
