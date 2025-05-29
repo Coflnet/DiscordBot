@@ -569,7 +569,7 @@ public partial class VpsCommands : InteractionModuleBase
 
     private async Task CheckForLoginLink(string line)
     {
-        var hasLoginLink = Regex.Match(line, @"^\[Coflnet\]: Please click (https?://[^\s]+) to login$");
+        var hasLoginLink = Regex.Match(line, @"^\[Coflnet\]:  ?Please click (https?:\/\/[^\s]+) to login ?$");
         if (hasLoginLink.Success)
         {
             await LoginImplicitly(hasLoginLink);
