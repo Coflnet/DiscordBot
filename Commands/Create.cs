@@ -43,11 +43,8 @@ public partial class VpsCommands
         public async Task VpsCreate([Autocomplete(typeof(McNameAutocompleteHandler))] string ign, ITextChannel? webHookChannel = null)
         {
             await DeferAsync(ephemeral: true);
-            if (ign.Length == 32)
-            {
-                var playerSearch = await searchApi.ApiSearchPlayerPlayerNameGetAsync(ign);
-                ign = playerSearch.First().Name;
-            }
+            var playerSearch = await searchApi.ApiSearchPlayerPlayerNameGetAsync(ign);
+            ign = playerSearch.First().Name; // also important for correct casing
             var profile = await persistence.GetDiscordAccountInfo(Context.User.Id);
             if (profile?.UserId.Contains('\\') ?? false)
                 profile = null;// ignore broken accounts
