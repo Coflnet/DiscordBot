@@ -300,13 +300,13 @@ public partial class VpsCommands : InteractionModuleBase
                     await CheckForLoginLink(line ?? "");
                 return;
             }
-            await ModifyOriginalResponseAsync(msg =>
-            {
-                msg.Content = $"Instance could not be started, please check logs and contact support, your instance id is `{target}`";
-                msg.Components = new ComponentBuilder()
-                    .Build();
-            });
         }
+        await ModifyOriginalResponseAsync(msg =>
+        {
+            msg.Content = $"Instance could not be started, please check logs and contact support, your instance id is `{target}`";
+            msg.Components = new ComponentBuilder()
+                .Build();
+        });
     }
 
     [SlashCommand("import", "Import json vps settings, eg from TPM")]
