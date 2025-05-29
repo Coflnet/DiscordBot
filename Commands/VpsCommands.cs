@@ -267,6 +267,21 @@ public partial class VpsCommands : InteractionModuleBase
             var lines = await lokiQuery.GetVpsLog(target, DateTimeOffset.Now.AddMinutes(-2), DateTimeOffset.Now, 30);
             foreach (var item in lines)
             {
+                if (item.Contains("https://www.microsoft.com/link"))
+                {
+                    var loginMatch = Regex.Match(item, @"https://www.microsoft.com/link/([a-zA-Z0-9]+)");
+                    if (loginMatch.Success)
+                    {
+                        await ModifyOriginalResponseAsync(msg =>
+                        {
+                            msg.Content = $"Please login to your microsoft account by clicking the link: {loginMatch.Groups[0].Value}";
+                            msg.Components = new ComponentBuilder()
+                                .WithButton("Login with Microsoft", url: loginMatch.Groups[0].Value, style: ButtonStyle.Link)
+                                .Build();
+                        });
+                        return;
+                    }
+                }
                 var match = Regex.Match(item, $@"^(.*) logged in!$");
                 if (!match.Success)
                     continue;
