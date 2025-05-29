@@ -26,13 +26,14 @@ public partial class VpsCommands : InteractionModuleBase
     private readonly ISettingsApi settingsApi;
     private readonly LokiQuery lokiQuery;
 
-    public VpsCommands(IVpsApi vpsApi, ILogger<VpsCommands> logger, Persistence persistence, IConfiguration configuration, LokiQuery lokiQuery)
+    public VpsCommands(IVpsApi vpsApi, ILogger<VpsCommands> logger, Persistence persistence, IConfiguration configuration, LokiQuery lokiQuery, ISettingsApi settingsApi)
     {
         this.vpsApi = vpsApi;
         this.logger = logger;
         this.persistence = persistence;
         this.configuration = configuration;
         this.lokiQuery = lokiQuery;
+        this.settingsApi = settingsApi;
     }
 
 
@@ -622,6 +623,7 @@ public partial class VpsCommands : InteractionModuleBase
             await FollowupAsync("Failed to log you in automatically", ephemeral: true);
             return;
         }
+        logger.LogInformation("Logging in user {userId} with connection id {connectionId}", profile.UserId, urldecoded);
         await settingsApi.SettingsUpdateSettingAsync(urldecoded, "userId", profile.UserId.ToString());
     }
 
