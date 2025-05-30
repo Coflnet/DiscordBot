@@ -248,6 +248,48 @@ public partial class VpsCommands : InteractionModuleBase
         });
     }
 
+    [SlashCommand("reset", "Resets VPS settings to default, optionally preserving specific data.")]
+    public async Task VpsReset(
+        [Summary("reset-login", "Reset the minecraft login info (e.g., Minecraft login, IGNs)")]
+        bool resetLogin = false,
+        [Summary("reset-config", "Reset the vps settings (e.g., webhook format)")]
+        bool resetConfig = true)
+    {
+        (string userId, Guid target) = await GetInstanceId();
+        if (target == default)
+            return;
+
+        logger.LogInformation("Attempting to reset VPS instance {InstanceId} for user {UserId}. PreserveGameState: {PreserveGameState}, PreserveConfig: {PreserveConfig}", target, userId, resetLogin, resetConfig);
+        if (resetLogin)
+        {
+            await UpdateSetting<string?>(userId, "tpm_extra_config", null);
+            await FollowupAsync("Reset login details", ephemeral: true);
+        }
+        if (resetConfig)
+        {
+            var settingsResponse = await vpsApi.VpsUserInstanceIdSettingsGetAsync(userId, target);
+            if (!settingsResponse.TryOk(out var settings))
+            {
+                logger.LogError("Failed to get settings for instance {InstanceId}. Response: {RawContent}", target, settingsResponse.RawContent);
+                await PrintError(settingsResponse);
+                return;
+            }
+            await UpdateSetting<string?>(userId, "tpm_config", null);
+            await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
+            {
+                Setting = "webhooks",
+                Value = settings.GetValueOrDefault("webhooks") ?? ""
+            }));
+            await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
+            {
+                Setting = "igns",
+                Value = settings.GetValueOrDefault("webhooks") ?? ""
+            }));
+            await FollowupAsync("Reset general config, copied over ign and webhooks", ephemeral: true);
+        }
+        await vpsApi.VpsUserInstanceIdTurnOnPostAsync(userId, target);
+    }
+
     [SlashCommand("start", "Start vps")]
     public async Task VpsStart()
     {
@@ -632,7 +674,12 @@ public partial class VpsCommands : InteractionModuleBase
             return;
         }
         logger.LogInformation("Logging in user {userId} with connection id {connectionId}", profile.UserId, urldecoded);
-        await settingsApi.SettingsUpdateSettingAsync(urldecoded, "userId", JsonConvert.SerializeObject(JsonConvert.SerializeObject(profile.UserId.ToString())));
+        await UpdateSetting(urldecoded, "userId", profile.UserId.ToString());
+    }
+
+    private async Task UpdateSetting<T>(string userId, string key, T data)
+    {
+        await settingsApi.SettingsUpdateSettingAsync(userId, key, JsonConvert.SerializeObject(JsonConvert.SerializeObject(data)));
     }
 
     // Add class to deserialize WebSocket responses
