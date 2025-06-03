@@ -274,7 +274,7 @@ public partial class VpsCommands : InteractionModuleBase
                 await PrintError(settingsResponse);
                 return;
             }
-            await UpdateSetting<string?>(userId, "tpm_config", null);
+            await settingsApi.SettingsUpdateSettingAsync(userId, "tpm_config", JsonConvert.SerializeObject(null));
             await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
             {
                 Setting = "webhooks",
