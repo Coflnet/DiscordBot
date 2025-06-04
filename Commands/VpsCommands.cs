@@ -271,8 +271,7 @@ public partial class VpsCommands : InteractionModuleBase
             if (!settingsResponse.TryOk(out var settings))
             {
                 logger.LogError("Failed to get settings for instance {InstanceId}. Response: {RawContent}", target, settingsResponse.RawContent);
-                await PrintError(settingsResponse);
-                return;
+                settings = [];
             }
             await settingsApi.SettingsUpdateSettingAsync(userId, "tpm_config", JsonConvert.SerializeObject(null));
             await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
