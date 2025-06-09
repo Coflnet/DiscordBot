@@ -146,6 +146,11 @@ public partial class VpsCommands
                 Setting = "skipalways",
                 Value = $"true"
             }));
+            await vpsApi.VpsUserInstanceIdSetPostAsync(newInstance.OwnerId, newInstance.Id ?? default, new(new()
+            {
+                Setting = "discordID",
+                Value = Context.User.Id.ToString()
+            }));
             if (webHookChannel != null)
             {
                 try
