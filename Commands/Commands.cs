@@ -70,7 +70,13 @@ public class Commands : InteractionModuleBase
     {
         await DeferAsync(ephemeral: true);
         var user = (await searchApi.ApiSearchPlayerPlayerNameGetAsync(userName)).First();
+        await FollowupAsync("", embed: new EmbedBuilder()
+            .WithTitle("Checking ownership")
+            .WithDescription($"Updating Minecraft user `{user.Name}` with UUID `{user.Uuid}`")
+            .WithColor(Color.Blue)
+            .Build(), ephemeral: true);
         var profile = await profileClient.GetLookup(user.Uuid);
+
         if (DoesNotMatchExecutor(profile))
         {
             profile = await profileClient.GetLookup(user.Uuid, true);
@@ -78,31 +84,37 @@ public class Commands : InteractionModuleBase
         if (DoesNotMatchExecutor(profile))
         {
             logger.LogInformation("Profile data: " + Newtonsoft.Json.JsonConvert.SerializeObject(profile));
-            await FollowupAsync("", embed: new EmbedBuilder()
-                .WithTitle("Error")
-                .WithDescription(
-                $"""
-                The player `{user.Name}` has not linked their Discord account to their Hypixel account.
-                Join Hypixel and follow these steps to set your Discord link:
+            await ModifyOriginalResponseAsync(msg =>
+            {
+                msg.Embed = new EmbedBuilder()
+                    .WithTitle("Error")
+                    .WithDescription(
+                    $"""
+                    The player `{user.Name}` has not linked their Discord account to their Hypixel account.
+                    Join Hypixel and follow these steps to set your Discord link:
 
-                1. Click on My Profile (Right Click) in a Hypixel lobby
-                2. Click on `Social Media` (Player head next to compas)
-                3. Left-click on `Discord`
-                4. Paste this in the Minecraft ingame chat: {Context.Interaction.User.Username}
-                5. Rerun this command
-                """)
-                .WithColor(Color.Red)
-                .Build());
+                    1. Click on My Profile (Right Click) in a Hypixel lobby
+                    2. Click on `Social Media` (Player head next to compas)
+                    3. Left-click on `Discord`
+                    4. Paste this in the Minecraft ingame chat: {Context.Interaction.User.Username}
+                    5. Rerun this command
+                    """)
+                    .WithColor(Color.Red)
+                    .Build();
+            });
             return;
         }
 
         var existing = await persistence.GetDiscordAccountInfo(Context.Interaction.User.Id) ?? new DiscordAccountInfo();
         await userInfoUpdater.UpdateuserDetails(Context.Interaction.User.Id, user, existing);
-        await FollowupAsync("", embed: new EmbedBuilder()
-            .WithTitle("Success")
-            .WithDescription($"Your Minecraft account `{user.Name}` has been linked to your Discord account")
-            .WithColor(Color.Green)
-            .Build(), ephemeral: true);
+        await ModifyOriginalResponseAsync(msg =>
+        {
+            msg.Embed = new EmbedBuilder()
+                .WithTitle("Success")
+                .WithDescription($"Your Minecraft account `{user.Name}` has been linked to your Discord account")
+                .WithColor(Color.Green)
+                .Build();
+        });
     }
 
     [SlashCommand("run", "Run a command as one of your minecraft accounts", true)]
