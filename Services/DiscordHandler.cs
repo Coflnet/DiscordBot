@@ -255,7 +255,14 @@ internal class DiscordHandler : BackgroundService
         {
             // delete steam links
             await msg.DeleteAsync();
-            await msg.Author.SendMessageAsync("You posted a scam link (probably got hacked). Please secure your account. You can rejoin Coflnet discord in 10 minutes via the link on https://sky.coflent.com");
+            if (msg.Author is SocketGuildUser steamUser)
+            {
+                await steamUser.SetTimeOutAsync(TimeSpan.FromHours(1));
+                var serverName = (msg.Channel as SocketGuildChannel)?.Guild.Name ?? "Coflnet";
+                await msg.Author.SendMessageAsync($"You posted a steam link (probably got hacked). Please secure your account. We timed you out for 1 hour on {serverName}");
+                return;
+            }
+            await msg.Author.SendMessageAsync("You posted a scam link (probably got hacked). Please secure your account. You can rejoin Coflnet discord in 10 minutes via the link on https://sky.coflnet.com");
             var kickTask = (msg.Author as SocketGuildUser)?.KickAsync();
             if (kickTask != null)
                 await kickTask;
