@@ -38,9 +38,20 @@ public partial class VpsCommands
             this.lokiQuery = lokiQuery;
         }
 
-        [SlashCommand("tpm_plus", "Create a new vps")]
+        [SlashCommand("tpm_plus", "Create managed tpm+ instance on fast servers")]
         [DefaultMemberPermissions(GuildPermission.SendMessages)]
+        public async Task VpsCreatePlus([Autocomplete(typeof(McNameAutocompleteHandler))] string ign, ITextChannel? webHookChannel = null)
+        {
+            await VpsCreate("tpm+", ign, webHookChannel);
+        }
+        [SlashCommand("tpm", "Create managed tpm instance on fast servers")]
+        [DefaultMemberPermissions(GuildPermission.SendMessages)]
+        [RequireRole(869942341442600990)]
         public async Task VpsCreate([Autocomplete(typeof(McNameAutocompleteHandler))] string ign, ITextChannel? webHookChannel = null)
+        {
+            await VpsCreate("tpm", ign, webHookChannel);
+        }
+        public async Task VpsCreate(string kind, string ign, ITextChannel? webHookChannel = null)
         {
             await DeferAsync(ephemeral: true);
             var playerSearch = await searchApi.ApiSearchPlayerPlayerNameGetAsync(ign);
@@ -124,7 +135,7 @@ public partial class VpsCommands
             await ModifyOriginalResponseAsync(msg => msg.Content = "Creating instance, please wait");
             var options = System.Text.Json.JsonSerializer.Deserialize<VpsCreateRequest>(JsonConvert.SerializeObject(new
             {
-                appKind = "tpm+",
+                appKind = kind,
                 mcName = ign,
             }), new JsonSerializerOptions()
             {
@@ -141,11 +152,12 @@ public partial class VpsCommands
                 return;
             }
             await ModifyOriginalResponseAsync(msg => msg.Content = "Created an instance");
-            await vpsApi.VpsUserInstanceIdSetPostAsync(newInstance.OwnerId, newInstance.Id ?? default, new(new()
-            {
-                Setting = "skipalways",
-                Value = $"true"
-            }));
+            if (kind == "tpm+")
+                await vpsApi.VpsUserInstanceIdSetPostAsync(newInstance.OwnerId, newInstance.Id ?? default, new(new()
+                {
+                    Setting = "skipalways",
+                    Value = $"true"
+                }));
             await vpsApi.VpsUserInstanceIdSetPostAsync(newInstance.OwnerId, newInstance.Id ?? default, new(new()
             {
                 Setting = "discordID",
