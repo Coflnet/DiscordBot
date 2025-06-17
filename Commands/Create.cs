@@ -196,6 +196,18 @@ public partial class VpsCommands
 
         private async Task<bool> HandleLogin(string ign, Instance newInstance)
         {
+            if (newInstance.PaidUntil < DateTime.UtcNow)
+            {
+                await ModifyOriginalResponseAsync(msg =>
+                {
+                    var timeStamp = new DateTimeOffset(newInstance.PaidUntil ?? DateTime.UtcNow).ToUnixTimeSeconds();
+                    msg.Content = $"Your vps has expired at <t:{timeStamp}>. You can check details with `/vps info`";
+                    msg.Components = new ComponentBuilder()
+                        .WithButton("Get another 30 days", "renew-vps", ButtonStyle.Primary)
+                        .Build();
+                });
+                return false;
+            }
             await vpsApi.VpsUserInstanceIdSetPostAsync(newInstance.OwnerId, newInstance.Id ?? default, new(new()
             {
                 Setting = "igns",
