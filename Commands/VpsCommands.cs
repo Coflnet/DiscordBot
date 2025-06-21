@@ -233,6 +233,42 @@ public partial class VpsCommands : InteractionModuleBase
                 .Build();
         });
     }
+    [ComponentInteraction("set-igns", true)]
+    public async Task SetIgns()
+    {
+        var originalContext = Context.Interaction as SocketMessageComponent;
+        await originalContext.RespondWithModalAsync<SetIgnsModal>("set-igns-modal");
+    }
+
+    [ModalInteraction("set-igns-modal", true)]
+    public async Task SetIgnsModalOpen(SetIgnsModal modal)
+    {
+        await DeferAsync(ephemeral: true);
+        (string userId, Guid target) = await GetInstanceId(false);
+        if (target == default)
+            return;
+        var igns = modal.IGNs;
+        var result = await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
+        {
+            Setting = "igns",
+            Value = igns
+        }));
+        if (!result.IsOk)
+        {
+            logger.LogInformation("Failed to set igns to {value} {response}", igns, result.RawContent);
+            await PrintError(result);
+            return;
+        }
+        await FollowupAsync($"Set IGNs to {igns}", ephemeral: true);
+    }
+
+
+    public class SetIgnsModal : IModal
+    {
+        [ModalTextInput("igns", TextInputStyle.Short, "Enter your IGNs, separated by commas")]
+        public string IGNs { get; set; }
+        public string Title => "Input your ign";
+    }
 
     [ComponentInteraction("cancel-renew-vps", true)]
     public async Task CancelRenewVps()
@@ -302,6 +338,24 @@ public partial class VpsCommands : InteractionModuleBase
             return;
         }
         await FollowupAsync("Starting instance", ephemeral: true);
+        var result = await vpsApi.VpsUserInstanceIdSettingsGetAsync(userId, target);
+        if (!result.TryOk(out var settings))
+        {
+            logger.LogInformation("Failed to get settings {response}", result.RawContent);
+            await FollowupAsync("Failed to get current settings, check `/vps info` please", ephemeral: true);
+            return;
+        }
+        if (settings.TryGetValue("igns", out var igns) && string.IsNullOrWhiteSpace(igns))
+        {
+            await ModifyOriginalResponseAsync(msg =>
+            {
+                msg.Content = "You have not set any IGNs, please do so with `/vps set igns <ign1>,<ign2>`";
+                msg.Components = new ComponentBuilder()
+                    .WithButton("Set IGNs", "set-igns", ButtonStyle.Primary)
+                    .Build();
+            });
+            return;
+        }
 
         for (int i = 0; i < 20; i++)
         {
