@@ -7,6 +7,7 @@ using System.Net.WebSockets;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Coflnet.Core;
+using Coflnet.Payments.Client.Api;
 using Coflnet.Sky.ModCommands.Client.Api;
 using Coflnet.Sky.ModCommands.Client.Model;
 using Coflnet.Sky.Settings.Client.Api;
@@ -25,8 +26,9 @@ public partial class VpsCommands : InteractionModuleBase
     private readonly Persistence persistence;
     private readonly ISettingsApi settingsApi;
     private readonly LokiQuery lokiQuery;
+    private readonly ITopUpApi topUpApi;
 
-    public VpsCommands(IVpsApi vpsApi, ILogger<VpsCommands> logger, Persistence persistence, IConfiguration configuration, LokiQuery lokiQuery, ISettingsApi settingsApi)
+    public VpsCommands(IVpsApi vpsApi, ILogger<VpsCommands> logger, Persistence persistence, IConfiguration configuration, LokiQuery lokiQuery, ISettingsApi settingsApi, ITopUpApi topUpApi)
     {
         this.vpsApi = vpsApi;
         this.logger = logger;
@@ -34,6 +36,7 @@ public partial class VpsCommands : InteractionModuleBase
         this.configuration = configuration;
         this.lokiQuery = lokiQuery;
         this.settingsApi = settingsApi;
+        this.topUpApi = topUpApi;
     }
 
 
@@ -636,6 +639,7 @@ public partial class VpsCommands : InteractionModuleBase
                     if (logReceived.Count > 100)
                         logReceived.Dequeue();
                     await CheckForLoginLink(line.Item2);
+                    await CheckForBan(line.Item2);
                 }
                 var newest20 = logReceived.OrderByDescending(v => v.Item1).Take(20).OrderBy(v => v.Item1).Select(v => v.Item2);
                 var logEmbed = new EmbedBuilder()
@@ -661,6 +665,33 @@ public partial class VpsCommands : InteractionModuleBase
             }
             return primary;
         }
+    }
+
+    private async Task CheckForBan(string line)
+    {
+        if (!line.StartsWith("[TPM] ") || !line.Contains("kicked because You are temporarily banned for ,29d 23h 59m"))
+        {
+            return;
+        }
+
+        (string userId, Guid target) = await GetInstanceId();
+        try
+        {
+            await topUpApi.TopUpCustomPostAsync(userId, new()
+            {
+                Amount = 1800,
+                ProductId = "compensation",
+                Reference = "being banned using vps " + DateTime.UtcNow.ToString("yyyy-MM")
+            });
+            await FollowupAsync("We are sorry to inform you but hypixel banned you. To offset the issue compensated you 1800 CoflCoins", ephemeral: true);
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Failed to compensate user for ban, instance {instanceId}", target);
+            if (!e.Message.Contains("exists"))
+                await FollowupAsync("We are sorry to inform you but hypixel banned you. We tried to compensate you but failed, please contact support", ephemeral: true);
+        }
+
     }
 
     private async Task CheckForLoginLink(string line)
