@@ -679,11 +679,11 @@ public partial class VpsCommands : InteractionModuleBase
         {
             await topUpApi.TopUpCustomPostAsync(userId, new()
             {
-                Amount = 1800,
+                Amount = 2100,
                 ProductId = "compensation",
                 Reference = "being banned using vps " + DateTime.UtcNow.ToString("yyyy-MM")
             });
-            await FollowupAsync("We are sorry to inform you but hypixel banned you. To offset the issue compensated you 1800 CoflCoins", ephemeral: true);
+            await FollowupAsync("We are sorry to inform you but hypixel banned you. To offset the issue compensated you 2100 CoflCoins", ephemeral: true);
         }
         catch (Exception e)
         {
