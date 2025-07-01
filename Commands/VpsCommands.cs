@@ -294,8 +294,8 @@ public partial class VpsCommands : InteractionModuleBase
         [Summary("reset-config", "Reset the vps settings (e.g., webhook format)")]
         bool resetConfig = true,
         [Summary("instance-type", "Switch the type of instance you have, will try to migrate settings")]
-        [Choice("tpm", "TPM (normal)")]
-        [Choice("tpm+", "TPM+")]
+        [Choice("TPM (normal)", "tpm")]
+        [Choice("TPM+", "tpm+")]
         string? instanceType = null)
     {
         (string userId, Guid target) = await GetInstanceId();
