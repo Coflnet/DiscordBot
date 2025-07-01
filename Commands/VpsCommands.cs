@@ -381,9 +381,9 @@ public partial class VpsCommands : InteractionModuleBase
             return;
         }
 
-        for (int i = 0; i < 20; i++)
+        for (int i = 0; i < 30; i++)
         {
-            await Task.Delay(3000);
+            await Task.Delay(3500);
             var lines = await lokiQuery.GetVpsLog(target, DateTimeOffset.UtcNow.AddMinutes(i == 0 ? -65 : -2), DateTimeOffset.UtcNow, 30);
             foreach (var item in lines)
             {
