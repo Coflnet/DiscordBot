@@ -292,11 +292,32 @@ public partial class VpsCommands : InteractionModuleBase
         [Summary("reset-login", "Reset the minecraft login info (e.g., Minecraft login, IGNs)")]
         bool resetLogin = false,
         [Summary("reset-config", "Reset the vps settings (e.g., webhook format)")]
-        bool resetConfig = true)
+        bool resetConfig = true,
+        [Summary("instance-type", "Switch the type of instance you have, will try to migrate settings")]
+        [Choice("tpm", "TPM (normal)")]
+        [Choice("tpm+", "TPM+")]
+        string? instanceType = null)
     {
         (string userId, Guid target) = await GetInstanceId();
         if (target == default)
             return;
+
+        if (instanceType != null)
+        {
+            var instanceData = await vpsApi.VpsInstancesGetAsync(userId);
+            if (!instanceData.TryOk(out var instances))
+            {
+                logger.LogError("Failed to get instances for user {UserId}. Response: {RawContent}", userId, instanceData.RawContent);
+                await FollowupAsync("Failed to get instances", ephemeral: true);
+                return;
+            }
+            var instance = instances.FirstOrDefault(i => i.Id == target);
+            await vpsApi.VpsUserInstanceIdResetPostAsync(userId, target, new VpsCreateRequest()
+            {
+                AppKind = instanceType
+            });
+            resetLogin = true; // reset login details when changing instance type
+        }
 
         logger.LogInformation("Attempting to reset VPS instance {InstanceId} for user {UserId}. PreserveGameState: {PreserveGameState}, PreserveConfig: {PreserveConfig}", target, userId, resetLogin, resetConfig);
         if (resetLogin)
