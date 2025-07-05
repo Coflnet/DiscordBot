@@ -339,11 +339,13 @@ public partial class VpsCommands : InteractionModuleBase
                 Setting = "webhooks",
                 Value = settings.GetValueOrDefault("webhooks") ?? ""
             }));
-            await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
-            {
-                Setting = "igns",
-                Value = settings.GetValueOrDefault("webhooks") ?? ""
-            }));
+            var igns = settings.GetValueOrDefault("igns") ?? "";
+            if (igns != null && !igns.Contains(":"))
+                await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
+                {
+                    Setting = "igns",
+                    Value = igns
+                }));
             await FollowupAsync("Reset general config, copied over ign and webhooks", ephemeral: true);
         }
         await vpsApi.VpsUserInstanceIdTurnOnPostAsync(userId, target);
