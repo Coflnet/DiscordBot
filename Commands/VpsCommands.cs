@@ -322,8 +322,7 @@ public partial class VpsCommands : InteractionModuleBase
         logger.LogInformation("Attempting to reset VPS instance {InstanceId} for user {UserId}. PreserveGameState: {PreserveGameState}, PreserveConfig: {PreserveConfig}", target, userId, resetLogin, resetConfig);
         if (resetLogin)
         {
-            await UpdateSetting<string?>(userId, "tpm_extra_config", null);
-            await FollowupAsync("Reset login details", ephemeral: true);
+            await ResetUserLogin(userId);
         }
         if (resetConfig)
         {
@@ -349,6 +348,12 @@ public partial class VpsCommands : InteractionModuleBase
             await FollowupAsync("Reset general config, copied over ign and webhooks", ephemeral: true);
         }
         await vpsApi.VpsUserInstanceIdTurnOnPostAsync(userId, target);
+    }
+
+    private async Task ResetUserLogin(string userId)
+    {
+        await UpdateSetting<string?>(userId, "tpm_extra_config", null);
+        await FollowupAsync("Reset login details", ephemeral: true);
     }
 
     [SlashCommand("start", "Start vps")]
@@ -492,6 +497,27 @@ public partial class VpsCommands : InteractionModuleBase
         var originalContext = Context.Interaction as SocketMessageComponent;
         await originalContext!.DeleteOriginalResponseAsync();
         await FollowupAsync("Stopped following", ephemeral: true);
+    }
+
+    [ComponentInteraction("reset-login", true)]
+    public async Task ResetLogin()
+    {
+        (string userId, Guid target) = await GetInstanceId();
+
+            await ResetUserLogin(userId);
+        var originalContext = Context.Interaction as SocketMessageComponent;
+        
+        await originalContext!.ModifyOriginalResponseAsync(m=>
+        {
+            m.Embed = new EmbedBuilder()
+                .WithTitle("Reset Login")
+                .WithDescription("Reset login details, you can now login again with `/vps start`")
+                .WithColor(Color.Green)
+                .Build();
+            m.Components = new ComponentBuilder()
+                .WithButton("Stop Following", "stop-following", ButtonStyle.Danger)
+                .Build();
+        });
     }
 
     [ComponentInteraction("show-log")]
@@ -656,6 +682,7 @@ public partial class VpsCommands : InteractionModuleBase
                 }
                 var logContent = logEntry.streams.SelectMany(s => s.values.Select(v => (long.Parse(v[0]), v[1]))).OrderBy(v => v.Item1).ToList();
 
+                var displayReset = false;
                 foreach (var line in logContent)
                 {
                     logReceived.Enqueue(line);
@@ -663,15 +690,31 @@ public partial class VpsCommands : InteractionModuleBase
                         logReceived.Dequeue();
                     await CheckForLoginLink(line.Item2);
                     await CheckForBan(line.Item2);
+                    if (await CheckForLoginFail(line.Item2))
+                    {
+                        displayReset = true;
+                    }
                 }
                 var newest20 = logReceived.OrderByDescending(v => v.Item1).Take(20).OrderBy(v => v.Item1).Select(v => v.Item2);
                 var logEmbed = new EmbedBuilder()
                     .WithTitle($"VPS Logs (last received <t:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}:R>)")
                     .WithDescription(FormatLog(newest20))
-                    .WithColor(Color.Blue)
-                    .Build();
+                    .WithColor(Color.Blue);
 
-                await ModifyOriginalResponseAsync(m => { m.Embed = logEmbed; });
+                await ModifyOriginalResponseAsync(m =>
+                {
+                    if (!displayReset)
+
+                        m.Embed = logEmbed.Build();
+                    else
+                    {
+                        m.Components = new ComponentBuilder()
+                            .WithButton("Reset Login", "reset-login", ButtonStyle.Danger)
+                            .WithButton("Stop Following", "stop-following", ButtonStyle.Danger)
+                            .Build();
+                        m.Embed = logEmbed.WithFooter("It looks like you logged in with a minecraft account not owning Minecraft, click the Reset Login button to logout").Build();
+                    }
+                });
             }
             logger.LogInformation("WebSocket connection closed reason: {reason} {httpResponseStatus}", ws.CloseStatus, ws.HttpStatusCode);
         }
@@ -714,6 +757,16 @@ public partial class VpsCommands : InteractionModuleBase
             if (!e.Message.Contains("exists"))
                 await FollowupAsync("We are sorry to inform you but hypixel banned you. We tried to compensate you but failed, please contact support", ephemeral: true);
         }
+    }
+    public async Task<bool> CheckForLoginFail(string line)
+    {
+        // 	Failed to log into RenaAvali after 120 seconds
+        if (!line.StartsWith("[TPM] ") || !line.Contains("Failed to log into"))
+        {
+            return false;
+        }
+        var match = Regex.Match(line, @"Failed to log into ([^ ]+) after \d+ seconds");
+        return match.Success;
 
     }
 
