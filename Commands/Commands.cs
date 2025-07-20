@@ -254,9 +254,9 @@ public class Commands : InteractionModuleBase
         {
             // discord id, try to get
             var discordInfo = await persistence.GetDiscordAccountInfo(userId);
-            if (discordInfo == null)
+            if (discordInfo?.MinecraftName == null)
             {
-                await FollowupAsync("No user found with that id");
+                await FollowupAsync("No user found with that id (or not verified)");
                 return null;
             }
             userId = await GetUserIdFromMcName(discordInfo.MinecraftName);
