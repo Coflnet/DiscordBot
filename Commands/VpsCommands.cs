@@ -312,10 +312,16 @@ public partial class VpsCommands : InteractionModuleBase
                 return;
             }
             var instance = instances.FirstOrDefault(i => i.Id == target);
-            await vpsApi.VpsUserInstanceIdResetPostAsync(userId, target, new VpsCreateRequest()
+            var resetResult = await vpsApi.VpsUserInstanceIdResetPostAsync(userId, target, new VpsCreateRequest()
             {
                 AppKind = instanceType
             });
+            if (!resetResult.IsOk)
+            {
+                await PrintError(resetResult);
+                logger.LogError("Failed to reset instance {InstanceId} for user {UserId}. Response: {RawContent}", target, userId, resetResult.RawContent);
+                return;
+            }
             resetLogin = true; // reset login details when changing instance type
         }
 
