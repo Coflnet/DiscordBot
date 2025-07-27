@@ -874,19 +874,19 @@ public partial class VpsCommands : InteractionModuleBase
         var profile = await persistence.GetDiscordAccountInfo(Context.User.Id);
         if (profile == null)
         {
-            await FollowupAsync("You don't seem to have verified a minecraft account, use `/update-mc-user`");
+            await FollowupAsync("You don't seem to have verified a minecraft account, use `/update-mc-user`", ephemeral: true);
             return default;
         }
         var instances = await vpsApi.VpsInstancesGetAsync(new(profile.UserId));
         if (!instances.TryOk(out var instance))
         {
             logger.LogInformation("Failed to get instances {response}", instances.RawContent);
-            await FollowupAsync("Failed to get instances");
+            await FollowupAsync("Failed to get instances", ephemeral: true);
             return default;
         }
         if (instance.Count == 0)
         {
-            await FollowupAsync("You don't seem to have any instance running");
+            await FollowupAsync("You don't seem to have any instance running", ephemeral: true);
             return default;
         }
 
