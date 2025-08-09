@@ -15,7 +15,7 @@ using Discord.Net;
 using Discord.WebSocket;
 using Newtonsoft.Json;
 
-internal class DiscordHandler : BackgroundService
+public class DiscordHandler : BackgroundService
 {
     private readonly ILogger<DiscordHandler> logger;
     private readonly IConfiguration _config;
@@ -78,6 +78,20 @@ internal class DiscordHandler : BackgroundService
 
         await Task.Delay(-1, stoppingToken);
         sub.Unsubscribe();
+    }
+
+    public async Task<IEnumerable<IMessage>> GetMessagesFromChannel(ulong channelId, ulong beforeMessageId = 0)
+    {
+        if (await client.GetChannelAsync(channelId) is not IMessageChannel channel)
+        {
+            logger.LogError("Channel with ID {id} not found", channelId);
+            return [];
+        }
+        if (beforeMessageId != 0)
+        {
+            return await channel.GetMessagesAsync(beforeMessageId, Direction.Before, limit: 100).FlattenAsync();
+        }
+        return await channel.GetMessagesAsync(limit: 100).FlattenAsync();
     }
 
 
@@ -251,6 +265,17 @@ internal class DiscordHandler : BackgroundService
         if (msg.Author.IsBot || msg.Author.IsWebhook) return;
         var channelName = (msg.Channel as SocketGuildChannel)?.Name;
         Console.WriteLine(msg.Content + " in " + channelName);
+        await persistence.SaveDiscordMessage(new DiscordMessage
+        {
+            ChannelId = msg.Channel.Id,
+            MessageId = msg.Id,
+            Content = msg.Content,
+            Attachments = msg.Attachments.ToDictionary(a => (long)a.Id, a => a.Url),
+            CreatedAt = msg.CreatedAt,
+            AuthorId = msg.Author.Id,
+            AuthorName = msg.Author.Username,
+            UpdateAt = DateTime.UtcNow // Set the update time to now
+        });
         if (msg.Content.Contains("steamcommunity.com"))
         {
             // delete steam links

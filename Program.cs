@@ -15,7 +15,8 @@ var builder = WebApplication.CreateBuilder(args);
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddHostedService<DiscordHandler>();
+builder.Services.AddSingleton<DiscordHandler>();
+builder.Services.AddHostedService(di=> di.GetRequiredService<DiscordHandler>());
 builder.Services.AddSingleton<IPlayerNameApi, PlayerNameApi>(di => new PlayerNameApi(builder.Configuration["PLAYERNAME_BASE_URL"]));
 builder.Services.AddSingleton<IConnectApi, ConnectApi>(di => new ConnectApi(builder.Configuration["MCCONNECT_BASE_URL"]));
 builder.Services.AddSingleton<Coflnet.Payments.Client.Api.IUserApi, Coflnet.Payments.Client.Api.UserApi>(di => new Coflnet.Payments.Client.Api.UserApi(builder.Configuration["PAYMENTS_BASE_URL"]));
