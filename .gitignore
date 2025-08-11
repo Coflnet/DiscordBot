@@ -1,2 +1,4 @@
 bin
 obj
+Client/out/*
+Client/*.nupkg

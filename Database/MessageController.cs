@@ -29,7 +29,7 @@ public class MessageController : ControllerBase
     }
 
     [HttpGet("{channelName}")]
-    public async Task<IEnumerable<DiscordMessage>> Get(string channelName, DateTime before = default)
+    public async Task<IEnumerable<DiscordMessage>> GetMessages(string channelName, DateTime before = default)
     {
         if (before == default)
             before = DateTime.UtcNow;

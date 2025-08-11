@@ -12,7 +12,7 @@ public class AccountController : ControllerBase
     }
 
     [HttpPost]
-    public async Task Get(DiscordAccountInfo info)
+    public async Task UpdateAccountInfo(DiscordAccountInfo info)
     {
         await persistence.SaveDiscordAccountInfo(info);
     }
