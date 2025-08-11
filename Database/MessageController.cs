@@ -40,9 +40,10 @@ public class MessageController : ControllerBase
             return NotFound(new { error = "channel_not_found", message = $"Channel '{channelName}' not found." });
         }
         logger.LogInformation($"Fetching messages for channel '{channelName}' (ID: {channelId}).");
+        ulong oldest = 0; 
         for (int i = 0; i < 500; i++)
         {
-            var messages = (await discordHandler.GetMessagesFromChannel(channelId)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m, channelId)).ToList();
+            var messages = (await discordHandler.GetMessagesFromChannel(channelId, oldest)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m, channelId)).ToList();
             if (messages.Count == 0)
             {
                 logger.LogInformation($"No more messages found in channel '{channelName}' (ID: {channelId}).");
@@ -52,6 +53,7 @@ public class MessageController : ControllerBase
             {
                 await persistence.SaveDiscordMessage(message);
             }
+            oldest = messages.Min(m=>m.MessageId);
             logger.LogInformation($"Saved {messages.Count} messages to database for channel '{channelName}' (ID: {channelId}).");
             await Task.Delay(2000); // Wait for 2 seconds before fetching more messages
         }
