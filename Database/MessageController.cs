@@ -28,6 +28,36 @@ public class MessageController : ControllerBase
         this.persistence = persistence;
     }
 
+    [HttpGet("{channelName}/fetch")]
+    public async Task<IActionResult> FetchMessages(string channelName)
+    {
+        if (string.IsNullOrEmpty(channelName))
+        {
+            return BadRequest(new { error = "invalid_channel_name", message = "Channel name cannot be null or empty." });
+        }
+        if (!NameToChannelIdMap.TryGetValue(channelName, out var channelId))
+        {
+            return NotFound(new { error = "channel_not_found", message = $"Channel '{channelName}' not found." });
+        }
+        logger.LogInformation($"Fetching messages for channel '{channelName}' (ID: {channelId}).");
+        for (int i = 0; i < 500; i++)
+        {
+            var messages = (await discordHandler.GetMessagesFromChannel(channelId)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m, channelId)).ToList();
+            if (messages.Count == 0)
+            {
+                logger.LogInformation($"No more messages found in channel '{channelName}' (ID: {channelId}).");
+                return Ok(new { message = $"Messages fetched and saved for channel '{channelName}'. about {i * 100}" });
+            }
+            foreach (var message in messages)
+            {
+                await persistence.SaveDiscordMessage(message);
+            }
+            logger.LogInformation($"Saved {messages.Count} messages to database for channel '{channelName}' (ID: {channelId}).");
+            await Task.Delay(2000); // Wait for 2 seconds before fetching more messages
+        }
+        return Ok(new { message = $"Messages fetched and saved for channel '{channelName}'. but too many messages found aborted" });
+    }
+
     [HttpGet("{channelName}")]
     public async Task<IEnumerable<DiscordMessage>> GetMessages(string channelName, DateTime before = default)
     {

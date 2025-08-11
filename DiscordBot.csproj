@@ -7,6 +7,9 @@
     <UserSecretsId>6f26e6c2-0d50-47b5-b492-9065a7380b9e</UserSecretsId>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Client\**\*</DefaultItemExcludes>
+  </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Coflnet.Core" Version="0.5.1" />
     <PackageReference Include="Coflnet.Payments.Client" Version="0.16.1" />
