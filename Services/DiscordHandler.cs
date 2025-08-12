@@ -264,18 +264,9 @@ public class DiscordHandler : BackgroundService
         // ignore messages from bots and webhooks
         if (msg.Author.IsBot || msg.Author.IsWebhook) return;
         var channelName = (msg.Channel as SocketGuildChannel)?.Name;
+        var mentionsToName = msg.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
         Console.WriteLine(msg.Content + " in " + channelName);
-        await persistence.SaveDiscordMessage(new DiscordMessage
-        {
-            ChannelId = msg.Channel.Id,
-            MessageId = msg.Id,
-            Content = msg.Content,
-            Attachments = msg.Attachments.ToDictionary(a => (long)a.Id, a => a.Url),
-            CreatedAt = msg.CreatedAt,
-            AuthorId = msg.Author.Id,
-            AuthorName = msg.Author.Username,
-            UpdateAt = DateTime.UtcNow // Set the update time to now
-        });
+        await persistence.SaveDiscordMessage(MessageController.MapMessage(msg, mentionsToName));
         if (msg.Content.Contains("steamcommunity.com"))
         {
             // delete steam links

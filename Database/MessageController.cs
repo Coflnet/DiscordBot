@@ -1,5 +1,6 @@
 using System.Numerics;
 using Coflnet.Core;
+using Discord;
 using Discord.Rest;
 using Microsoft.AspNetCore.Mvc;
 
@@ -43,7 +44,7 @@ public class MessageController : ControllerBase
         ulong oldest = 0; 
         for (int i = 0; i < 500; i++)
         {
-            var messages = (await discordHandler.GetMessagesFromChannel(channelId, oldest)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m, channelId)).ToList();
+            var messages = (await discordHandler.GetMessagesFromChannel(channelId, oldest)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m)).ToList();
             if (messages.Count == 0)
             {
                 logger.LogInformation($"No more messages found in channel '{channelName}' (ID: {channelId}).");
@@ -84,7 +85,7 @@ public class MessageController : ControllerBase
 
 
         // Assuming GetMessagesAsync is a method that retrieves messages for the given channel ID
-        var messages = (await discordHandler.GetMessagesFromChannel(channelId)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m, channelId)).ToList();
+        var messages = (await discordHandler.GetMessagesFromChannel(channelId)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m)).ToList();
         while (messages.Count >= 100)
         {
             logger.LogInformation($"Retrieved {messages.Count} messages from channel '{channelName}' (ID: {channelId}).");
@@ -94,7 +95,7 @@ public class MessageController : ControllerBase
             }
             var lastMessageId = messages.Last().MessageId;
             await Task.Delay(2000); // Wait for 2 seconds before fetching more messages
-            messages = (await discordHandler.GetMessagesFromChannel(channelId, lastMessageId)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m, channelId)).ToList();
+            messages = (await discordHandler.GetMessagesFromChannel(channelId, lastMessageId)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m)).ToList();
         }
         foreach (var message in messages)
         {
@@ -103,17 +104,29 @@ public class MessageController : ControllerBase
         return messages;
     }
 
-    private static DiscordMessage MapMessages(RestUserMessage m, ulong channelId)
+    private static DiscordMessage MapMessages(RestUserMessage m)
     {
+        var userNames = m.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
+        return MapMessage(m, userNames);
+    }
+
+    public static DiscordMessage MapMessage(IMessage m, Dictionary<ulong, string> userNames)
+    {
+        var contentWithNamesReplaced = m.Content;
+        foreach (var user in userNames)
+        {
+            contentWithNamesReplaced = contentWithNamesReplaced.Replace($"<@{user.Key}>", $"@{user.Value}");
+            contentWithNamesReplaced = contentWithNamesReplaced.Replace($"<@!{user.Key}>", $"@{user.Value}");
+        }
         return new DiscordMessage
         {
             MessageId = m!.Id,
-            Content = m.Content,
+            Content = contentWithNamesReplaced,
             Attachments = m.Attachments.ToDictionary(a => (long)a.Id, a => a.Url),
             CreatedAt = m.CreatedAt,
             AuthorId = m.Author.Id,
             AuthorName = m.Author.Username,
-            ChannelId = channelId,
+            ChannelId = m.Channel.Id,
             UpdateAt = DateTime.UtcNow // Set the update time to now
         };
     }
