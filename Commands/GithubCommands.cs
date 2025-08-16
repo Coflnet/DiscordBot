@@ -19,7 +19,7 @@ public class GithubCommands : InteractionModuleBase
     }
 
     [SlashCommand("issue", "Creates a github issue", true)]
-    [DefaultMemberPermissions(GuildPermission.Administrator)]
+    [CommandContextType(InteractionContextType.PrivateChannel, InteractionContextType.BotDm, InteractionContextType.Guild)]
     public async Task Issue([Summary("title", "Title of the issue")] string title,
         [Summary("repo", "Repository to create the issue in"), Autocomplete<GitRepoAutocompleteHandler>()] string repo,
         [Summary("body", "Body of the issue")] string body = "")
@@ -28,7 +28,7 @@ public class GithubCommands : InteractionModuleBase
         var callingChannel = (SocketTextChannel)Context.Channel;
         if (Context.User.Id != 267680402594988033)
         {
-            await FollowupAsync("This can currently only be executed by <@267680402594988033>");
+            await FollowupAsync("This can currently only be executed if you connected your Github account");
             return;
         }
         try

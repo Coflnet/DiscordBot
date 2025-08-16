@@ -185,6 +185,7 @@ public class DiscordHandler : BackgroundService
             }
 
             await _interactionService.RegisterCommandsToGuildAsync(guildId, true);
+            await _interactionService.RegisterCommandsGloballyAsync(true);
             _interactionService.Log += Log;
 
             await client.SetActivityAsync(new Game("being developed ...", ActivityType.Watching, ActivityProperties.Embedded, "at hyperspeed"));
