@@ -43,6 +43,7 @@ builder.Services.AddSingleton<GitHubClient>(di =>
     };
     return github;
 });
+builder.Services.AddResponseCaching();
 builder.Services.AddSingleton<Octokit.GraphQL.Connection>(di =>
 {
     var productInformation = new Octokit.GraphQL.ProductHeaderValue("CoflnetBot", "1");
@@ -66,6 +67,7 @@ app.UseSwaggerUI(c =>
     c.RoutePrefix = "api";
 });
 
+app.UseResponseCaching();
 app.UseHttpsRedirection();
 
 app.MapControllers();
