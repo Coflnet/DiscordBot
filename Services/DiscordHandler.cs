@@ -184,7 +184,7 @@ public class DiscordHandler : BackgroundService
                 }
             }
 
-            await _interactionService.RegisterCommandsToGuildAsync(guildId, true);
+            //await _interactionService.RegisterCommandsToGuildAsync(guildId, true);
             await _interactionService.RegisterCommandsGloballyAsync(true);
             _interactionService.Log += Log;
 
