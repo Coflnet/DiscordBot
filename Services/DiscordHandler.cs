@@ -158,6 +158,8 @@ public class DiscordHandler : BackgroundService
             var guildId = ulong.Parse(_config["GUILD_ID"] ?? throw new Exception("Guild ID not set"));
             var guild = client.GetGuild(guildId);
             var _interactionService = new InteractionService(client.Rest);
+            // run before addmodules to remove all because its now added globally
+            await _interactionService.RegisterCommandsToGuildAsync(guildId, true);
             await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(), _serviceProvider);
             if (guild == null)
             {
@@ -184,7 +186,6 @@ public class DiscordHandler : BackgroundService
                 }
             }
 
-            //await _interactionService.RegisterCommandsToGuildAsync(guildId, true);
             await _interactionService.RegisterCommandsGloballyAsync(true);
             _interactionService.Log += Log;
 
