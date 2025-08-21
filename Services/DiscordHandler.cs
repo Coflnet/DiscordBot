@@ -158,6 +158,8 @@ public class DiscordHandler : BackgroundService
             var guildId = ulong.Parse(_config["GUILD_ID"] ?? throw new Exception("Guild ID not set"));
             var guild = client.GetGuild(guildId);
             var _interactionService = new InteractionService(client.Rest);
+            await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(), _serviceProvider);
+            await _interactionService.RegisterCommandsGloballyAsync(true);
             if (guild == null)
             {
                 logger.LogError("Guild not found");
@@ -219,9 +221,6 @@ public class DiscordHandler : BackgroundService
                     logger.LogError(ex, "Error setting up guild integration for guild {guildId}", item.Id);
                 }
             }
-
-            await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(), _serviceProvider);
-            await _interactionService.RegisterCommandsGloballyAsync(true);
         }
         catch (Exception exception)
         {
@@ -234,7 +233,7 @@ public class DiscordHandler : BackgroundService
 
     private async Task SetupGuildIntegration(SocketGuild guild, InteractionService _interactionService)
     {
-        await _interactionService.RegisterCommandsToGuildAsync(guild.Id, true);
+        await _interactionService.RemoveModulesFromGuildAsync(guild.Id, _interactionService.Modules.ToArray());
 
         // Find or create in-game-chat webhook for the new server
         var chatChannel = guild.Channels.FirstOrDefault(c => c.Name == "in-game-chat") as ITextChannel;
