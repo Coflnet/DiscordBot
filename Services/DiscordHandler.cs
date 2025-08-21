@@ -158,9 +158,6 @@ public class DiscordHandler : BackgroundService
             var guildId = ulong.Parse(_config["GUILD_ID"] ?? throw new Exception("Guild ID not set"));
             var guild = client.GetGuild(guildId);
             var _interactionService = new InteractionService(client.Rest);
-            // run before addmodules to remove all because its now added globally
-            await _interactionService.RegisterCommandsToGuildAsync(guildId, true);
-            await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(), _serviceProvider);
             if (guild == null)
             {
                 logger.LogError("Guild not found");
@@ -186,7 +183,6 @@ public class DiscordHandler : BackgroundService
                 }
             }
 
-            await _interactionService.RegisterCommandsGloballyAsync(true);
             _interactionService.Log += Log;
 
             await client.SetActivityAsync(new Game("being developed ...", ActivityType.Watching, ActivityProperties.Embedded, "at hyperspeed"));
@@ -211,7 +207,7 @@ public class DiscordHandler : BackgroundService
                 }
             };
 
-            foreach (var item in  client.Guilds)
+            foreach (var item in client.Guilds)
             {
                 try
                 {
@@ -223,6 +219,9 @@ public class DiscordHandler : BackgroundService
                     logger.LogError(ex, "Error setting up guild integration for guild {guildId}", item.Id);
                 }
             }
+
+            await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(), _serviceProvider);
+            await _interactionService.RegisterCommandsGloballyAsync(true);
         }
         catch (Exception exception)
         {
