@@ -19,6 +19,7 @@ public class GithubCommands : InteractionModuleBase
     }
 
     [SlashCommand("issue", "Creates a github issue", true)]
+    [IntegrationType(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)]
     [CommandContextType(InteractionContextType.PrivateChannel, InteractionContextType.BotDm, InteractionContextType.Guild)]
     public async Task Issue([Summary("title", "Title of the issue")] string title,
         [Summary("repo", "Repository to create the issue in"), Autocomplete<GitRepoAutocompleteHandler>()] string repo,
