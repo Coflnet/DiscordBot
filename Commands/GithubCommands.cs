@@ -32,16 +32,21 @@ public class GithubCommands : InteractionModuleBase
             await FollowupAsync("This can currently only be executed if you connected your Github account");
             return;
         }
+        bool canread = false;
         try
         {
             var lastMessage = callingChannel.GetMessagesAsync(1).FlattenAsync().Result.First();
             var linkToMessage = lastMessage.GetJumpUrl();
             body += "\ncontext:" + linkToMessage;
+            canread = true;
         }
         catch (Exception e)
         {
             logger.LogError(e, "Error getting last message");
-            var channelUrl = "https://discord.com/channels/" + callingChannel.Guild.Id + "/" + callingChannel.Id;
+            string guildId = Context.Interaction.GuildId?.ToString() ?? "@me";
+            ulong channelId = Context.Interaction.ChannelId ?? 0UL;
+            logger.LogInformation("App command context - GuildId: {GuildId}, ChannelId: {ChannelId}", guildId, channelId);
+            var channelUrl = "https://discord.com/channels/" + Context.Interaction.GuildId + "/" + Context.Interaction.ChannelId;
             body += $"\ncontext: {channelUrl}";
         }
         var newIssue = new NewIssue(title)
@@ -69,7 +74,7 @@ public class GithubCommands : InteractionModuleBase
             .WithTitle("Issue created")
             .WithDescription($"Issue created at https://github.com/Coflnet/{repo}/issues/{issue.Number}")
             .WithColor(Color.Green)
-            .Build());
+            .Build(), ephemeral: !canread);
     }
 
     private async Task PutIssueOnBoard(string issueId)
