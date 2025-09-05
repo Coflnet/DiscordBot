@@ -305,7 +305,8 @@ public class Commands : InteractionModuleBase
     }
 
     [MessageCommand("Mute for rule 1")]
-    [Discord.Interactions.RequireUserPermission(ChannelPermission.ManageRoles)]
+    [CommandContextType(InteractionContextType.Guild)]
+    [RequireUserPermission(ChannelPermission.ManageRoles)]
     public async Task MuteForRule1(IMessage message)
     {
         await ExecuteMute(message, 1);
