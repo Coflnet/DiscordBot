@@ -313,13 +313,18 @@ public class DiscordHandler : BackgroundService
         var profile = await persistence.GetDiscordAccountInfo(msg.Author.Id);
         if (profile == default)
         {
-            await msg.ReplyAsync("", embed: new EmbedBuilder()
+            var handle = await msg.ReplyAsync("", embed: new EmbedBuilder()
                 .WithTitle("You need to select your Minecraft account")
                 .WithDescription("To do so run **/update-mc-user** ")
                 .WithColor(Color.Red)
                 .Build());
             if (!msg.Content.Contains('<')) // only keep messages with pings
                 await msg.DeleteAsync();
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromMinutes(2));
+                await handle.DeleteAsync();
+            });
             return;
         }
         if (msg.Content.StartsWith("/update-mc-user"))
