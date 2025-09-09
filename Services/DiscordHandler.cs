@@ -27,7 +27,7 @@ public class DiscordHandler : BackgroundService
     private UserInfoUpdater userInfoUpdater;
     private Dictionary<string, string[]> QuickResponses = new(){
         {"!new-user", ["## (Quick tutorial for MORE flips)",
-        "1. Use /cofl setgui tfm (Makes it so you don't have to move your mouse while buying)",
+        "1. Use /cofl setgui cofl (Makes it so you don't have to move your mouse while buying)",
         "2. When there is a BED (A countdown auction) Don't spam your mouse like crazy, but rather keep it at either 8-10~ cps. (Because of a hypixel mechanic it will just not register any other clicks and it will seem like you are just not clicking in the gui)",
         "3. Set a Keybind to open next/best flip in your Minecraft settings (under the skycofl section). When holding the keybind it automatically opens the flip without having to click on the flip message (not bannable)",
         "## (Premium+ advice)",
@@ -80,7 +80,7 @@ public class DiscordHandler : BackgroundService
         sub.Unsubscribe();
     }
 
-    public async Task<IEnumerable<IMessage>> GetMessagesFromChannel(ulong channelId, ulong beforeMessageId = 0)
+    public async Task<IEnumerable<IMessage>> GetMessagesFromChannel(ulong channelId, ulong beforeMessageId = 0, int limit = 100)
     {
     if (await client!.GetChannelAsync(channelId) is not IMessageChannel channel)
         {
@@ -89,9 +89,9 @@ public class DiscordHandler : BackgroundService
         }
         if (beforeMessageId != 0)
         {
-            return await channel.GetMessagesAsync(beforeMessageId, Direction.Before, limit: 100).FlattenAsync();
+            return await channel.GetMessagesAsync(beforeMessageId, Direction.Before, limit: limit).FlattenAsync();
         }
-        return await channel.GetMessagesAsync(limit: 100).FlattenAsync();
+        return await channel.GetMessagesAsync(limit: limit).FlattenAsync();
     }
 
     public async Task<IMessage?> GetMessageFromChannel(ulong channelId, ulong messageId)

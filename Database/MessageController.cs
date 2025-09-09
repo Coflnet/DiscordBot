@@ -80,42 +80,20 @@ public class MessageController : ControllerBase
         var stored = (await persistence.GetDiscordMessages(channelId, before)).ToList();
         if (stored.Count > 0)
         {
-            logger.LogInformation($"Retrieved {stored.Count} messages from database for channel '{channelName}' (ID: {channelId}). Validating attachments...");
+            logger.LogInformation($"Refreshing {stored.Count} messages from database for channel '{channelName}' (ID: {channelId}). Validating attachments...");
 
             // Refresh messages older than 24 hours by fetching fresh versions from Discord.
             var now = DateTime.UtcNow;
             var refreshed = new List<DiscordMessage>();
-            var toUpdate = new List<DiscordMessage>();
 
-            foreach (var msg in stored)
+            var toUpdate = stored.Where(m => now - m.UpdateAt > TimeSpan.FromHours(24) && m.Attachments != null && m.Attachments.Count > 0).ToList();
+
+            if (toUpdate.Count > 0)
             {
-                // Skip messages updated within the last 24 hours
-                if (now - msg.UpdateAt <= TimeSpan.FromHours(24))
-                {
-                    refreshed.Add(msg);
-                    continue;
-                }
-
-                if (msg.Attachments == null || msg.Attachments.Count == 0)
-                {
-                    // messages without attachments don't need to be refreshed
-                    refreshed.Add(msg);
-                    continue;
-                }
-
-                // Always attempt to fetch the latest message from Discord for messages older than 24h
-                var fresh = await discordHandler.GetMessageFromChannel(channelId, msg.MessageId);
-                if (fresh is RestUserMessage r && r != null)
-                {
-                    var mapped = MapMessages(r);
-                    toUpdate.Add(mapped);
-                    refreshed.Add(mapped);
-                    continue;
-                }
-
-                // If we couldn't fetch a fresh message, just update the timestamp to avoid immediate retries
-                msg.UpdateAt = now;
-                refreshed.Add(msg);
+                var getBefore = stored.Max(m => m.MessageId);
+                var loadesMessages = await discordHandler.GetMessagesFromChannel(channelId, getBefore, stored.Count);
+                var mapped = loadesMessages.OfType<RestUserMessage>().Select(m => MapMessages(m));
+                await persistence.SaveDiscordMessages(mapped);
             }
 
             if (toUpdate.Count > 0)
