@@ -62,7 +62,7 @@ public class MessageController : ControllerBase
     }
 
     [HttpGet("{channelName}")]
-    [ResponseCache(Duration = 600, Location = ResponseCacheLocation.Any)]
+    [ResponseCache(Duration = 600, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new[] { "before" })]
     public async Task<IEnumerable<DiscordMessage>> GetMessages(string channelName, DateTime before = default)
     {
         if (before == default)
