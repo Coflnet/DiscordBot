@@ -19,7 +19,7 @@ public class DiscordHandler : BackgroundService
 {
     private readonly ILogger<DiscordHandler> logger;
     private readonly IConfiguration _config;
-    private DiscordSocketClient client;
+    private DiscordSocketClient? client;
     private IServiceProvider _serviceProvider;
     private ChatService chatService;
     private HashSet<string> ChatWebhooks = new();
@@ -55,10 +55,10 @@ public class DiscordHandler : BackgroundService
             GatewayIntents = GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent,
             AlwaysDownloadUsers = true
         });
-        await client.LoginAsync(TokenType.Bot, _config["BotToken"]);
-        // set intent to receive message
-        await client.StartAsync();
-        client.Ready += Init;
+    await client!.LoginAsync(TokenType.Bot, _config["BotToken"]);
+    // set intent to receive message
+    await client.StartAsync();
+    client!.Ready += Init;
 
 
         client.MessageReceived += async (msg) =>
@@ -82,7 +82,7 @@ public class DiscordHandler : BackgroundService
 
     public async Task<IEnumerable<IMessage>> GetMessagesFromChannel(ulong channelId, ulong beforeMessageId = 0)
     {
-        if (await client.GetChannelAsync(channelId) is not IMessageChannel channel)
+    if (await client!.GetChannelAsync(channelId) is not IMessageChannel channel)
         {
             logger.LogError("Channel with ID {id} not found", channelId);
             return [];
@@ -92,6 +92,24 @@ public class DiscordHandler : BackgroundService
             return await channel.GetMessagesAsync(beforeMessageId, Direction.Before, limit: 100).FlattenAsync();
         }
         return await channel.GetMessagesAsync(limit: 100).FlattenAsync();
+    }
+
+    public async Task<IMessage?> GetMessageFromChannel(ulong channelId, ulong messageId)
+    {
+    if (await client!.GetChannelAsync(channelId) is not IMessageChannel channel)
+        {
+            logger.LogError("Channel with ID {id} not found", channelId);
+            return null;
+        }
+        try
+        {
+            return await channel.GetMessageAsync(messageId);
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Failed to get message {messageId} from channel {channelId}", messageId, channelId);
+            return null;
+        }
     }
 
 
@@ -130,7 +148,7 @@ public class DiscordHandler : BackgroundService
             {
                 using var scope = _serviceProvider.CreateScope();
                 var updater = scope.ServiceProvider.GetRequiredService<UserInfoUpdater>();
-                await updater.UpdateUserDetails(client, message.Uuid, message.Name);
+                await updater.UpdateUserDetails(client!, message.Uuid, message.Name ?? "");
             }
         });
         return true;
@@ -156,7 +174,7 @@ public class DiscordHandler : BackgroundService
         try
         {
             var guildId = ulong.Parse(_config["GUILD_ID"] ?? throw new Exception("Guild ID not set"));
-            var guild = client.GetGuild(guildId);
+            var guild = client!.GetGuild(guildId);
             var _interactionService = new InteractionService(client.Rest);
             await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(), _serviceProvider);
             await _interactionService.RegisterCommandsGloballyAsync(true);

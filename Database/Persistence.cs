@@ -79,6 +79,19 @@ public class Persistence
         await messages.Insert(message).ExecuteAsync();
     }
 
+    // Batch save multiple messages concurrently to reduce request round trips.
+    public async Task SaveDiscordMessages(IEnumerable<DiscordMessage> msgs)
+    {
+        var tasks = new List<Task>();
+        foreach (var message in msgs)
+        {
+            var date = message.CreatedAt;
+            message.Month = GetMonthofDate(date);
+            tasks.Add(messages.Insert(message).ExecuteAsync());
+        }
+        await Task.WhenAll(tasks);
+    }
+
     private static int GetMonthofDate(DateTimeOffset date)
     {
         return date.Month + (date.Year - 2020) * 12;

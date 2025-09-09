@@ -41,10 +41,10 @@ public class MessageController : ControllerBase
             return NotFound(new { error = "channel_not_found", message = $"Channel '{channelName}' not found." });
         }
         logger.LogInformation($"Fetching messages for channel '{channelName}' (ID: {channelId}).");
-        ulong oldest = 0; 
+        ulong oldest = 0;
         for (int i = 0; i < 500; i++)
         {
-            var messages = (await discordHandler.GetMessagesFromChannel(channelId, oldest)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m)).ToList();
+            var messages = (await discordHandler.GetMessagesFromChannel(channelId, oldest)).OfType<RestUserMessage>().Select(m => MapMessages(m)).ToList();
             if (messages.Count == 0)
             {
                 logger.LogInformation($"No more messages found in channel '{channelName}' (ID: {channelId}).");
@@ -54,7 +54,7 @@ public class MessageController : ControllerBase
             {
                 await persistence.SaveDiscordMessage(message);
             }
-            oldest = messages.Min(m=>m.MessageId);
+            oldest = messages.Min(m => m.MessageId);
             logger.LogInformation($"Saved {messages.Count} messages to database for channel '{channelName}' (ID: {channelId}).");
             await Task.Delay(2000); // Wait for 2 seconds before fetching more messages
         }
@@ -80,28 +80,66 @@ public class MessageController : ControllerBase
         var stored = (await persistence.GetDiscordMessages(channelId, before)).ToList();
         if (stored.Count > 0)
         {
-            logger.LogInformation($"Retrieved {stored.Count} messages from database for channel '{channelName}' (ID: {channelId}).");
-            return stored;
+            logger.LogInformation($"Retrieved {stored.Count} messages from database for channel '{channelName}' (ID: {channelId}). Validating attachments...");
+
+            // Refresh messages older than 24 hours by fetching fresh versions from Discord.
+            var now = DateTime.UtcNow;
+            var refreshed = new List<DiscordMessage>();
+            var toUpdate = new List<DiscordMessage>();
+
+            foreach (var msg in stored)
+            {
+                // Skip messages updated within the last 24 hours
+                if (now - msg.UpdateAt <= TimeSpan.FromHours(24))
+                {
+                    refreshed.Add(msg);
+                    continue;
+                }
+
+                if (msg.Attachments == null || msg.Attachments.Count == 0)
+                {
+                    // messages without attachments don't need to be refreshed
+                    refreshed.Add(msg);
+                    continue;
+                }
+
+                // Always attempt to fetch the latest message from Discord for messages older than 24h
+                var fresh = await discordHandler.GetMessageFromChannel(channelId, msg.MessageId);
+                if (fresh is RestUserMessage r && r != null)
+                {
+                    var mapped = MapMessages(r);
+                    toUpdate.Add(mapped);
+                    refreshed.Add(mapped);
+                    continue;
+                }
+
+                // If we couldn't fetch a fresh message, just update the timestamp to avoid immediate retries
+                msg.UpdateAt = now;
+                refreshed.Add(msg);
+            }
+
+            if (toUpdate.Count > 0)
+            {
+                // Batch save updated messages to reduce per-message round trips
+                await persistence.SaveDiscordMessages(toUpdate);
+            }
+
+            return refreshed;
         }
 
 
         // Assuming GetMessagesAsync is a method that retrieves messages for the given channel ID
-        var messages = (await discordHandler.GetMessagesFromChannel(channelId)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m)).ToList();
+        var messages = (await discordHandler.GetMessagesFromChannel(channelId)).OfType<RestUserMessage>().Select(m => MapMessages(m)).ToList();
         while (messages.Count >= 100)
         {
             logger.LogInformation($"Retrieved {messages.Count} messages from channel '{channelName}' (ID: {channelId}).");
-            foreach (var message in messages)
-            {
-                await persistence.SaveDiscordMessage(message);
-            }
+            // batch save to avoid per-message round trips
+            await persistence.SaveDiscordMessages(messages);
             var lastMessageId = messages.Last().MessageId;
             await Task.Delay(2000); // Wait for 2 seconds before fetching more messages
-            messages = (await discordHandler.GetMessagesFromChannel(channelId, lastMessageId)).Select(r => r as RestUserMessage).Where(m => m != null).Select(m => MapMessages(m)).ToList();
+            messages = (await discordHandler.GetMessagesFromChannel(channelId, lastMessageId)).OfType<RestUserMessage>().Select(m => MapMessages(m)).ToList();
         }
-        foreach (var message in messages)
-        {
-            await persistence.SaveDiscordMessage(message);
-        }
+        await persistence.SaveDiscordMessages(messages);
         return messages;
     }
 
