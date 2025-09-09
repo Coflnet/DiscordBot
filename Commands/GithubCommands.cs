@@ -27,7 +27,7 @@ public class GithubCommands : InteractionModuleBase
     {
         if (!Context.Interaction.IsDMInteraction)
             await DeferAsync();
-        var callingChannel = (SocketTextChannel)Context.Channel;
+        var callingChannel = Context.Channel;
         if (Context.User.Id != 267680402594988033)
         {
             await FollowupAsync("This can currently only be executed if you connected your Github account");
@@ -36,6 +36,8 @@ public class GithubCommands : InteractionModuleBase
         bool canread = false;
         try
         {
+            if (callingChannel == null)
+                throw new Exception("Calling channel is null");
             var lastMessage = callingChannel.GetMessagesAsync(1).FlattenAsync().Result.First();
             var linkToMessage = lastMessage.GetJumpUrl();
             body += "\ncontext:" + linkToMessage;
