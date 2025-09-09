@@ -94,15 +94,10 @@ public class MessageController : ControllerBase
                 var loadesMessages = await discordHandler.GetMessagesFromChannel(channelId, getBefore, stored.Count);
                 var mapped = loadesMessages.OfType<RestUserMessage>().Select(m => MapMessages(m));
                 await persistence.SaveDiscordMessages(mapped);
+                return mapped.ToList();
             }
 
-            if (toUpdate.Count > 0)
-            {
-                // Batch save updated messages to reduce per-message round trips
-                await persistence.SaveDiscordMessages(toUpdate);
-            }
-
-            return refreshed;
+            return stored;
         }
 
 
