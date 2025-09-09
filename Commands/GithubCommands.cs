@@ -25,8 +25,7 @@ public class GithubCommands : InteractionModuleBase
         [Summary("repo", "Repository to create the issue in"), Autocomplete<GitRepoAutocompleteHandler>()] string repo,
         [Summary("body", "Body of the issue")] string body = "")
     {
-        if (!Context.Interaction.IsDMInteraction)
-            await DeferAsync();
+        await DeferAsync(true);
         var callingChannel = Context.Channel;
         if (Context.User.Id != 267680402594988033)
         {
