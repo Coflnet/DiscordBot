@@ -159,11 +159,13 @@ public class Commands : InteractionModuleBase
 
 
     [SlashCommand("transactions", "List a users transactions", true)]
+    [IntegrationType(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)]
+    [CommandContextType(InteractionContextType.PrivateChannel, InteractionContextType.BotDm, InteractionContextType.Guild)]
     [DefaultMemberPermissions(GuildPermission.ManageRoles)]
     public async Task GetTransactions(string user)
     {
         var roles = (Context.User as SocketGuildUser)?.Roles;
-        if (!roles.Any(r => r.Id == 869942341442600990 || r.Id == 842102236024930304))
+        if (Context.User.Id != 267680402594988033 && !roles.Any(r => r.Id == 869942341442600990 || r.Id == 842102236024930304))
         {
             logger.LogWarning("User {userId} ({id}) tried to get transactions of {user}", Context.User.GlobalName, Context.User.Id, user);
             await RespondAsync("You need to be a moderator to use this command", ephemeral: true);
