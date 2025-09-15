@@ -53,7 +53,9 @@ public class GithubCommands : InteractionModuleBase
         catch (Exception e)
         {
             logger.LogError(e, "Error getting last message");
-            string guildId = Context.Interaction.GuildId?.ToString() ?? "@me";
+            string? guildId = Context.Interaction.GuildId?.ToString();
+            if (string.IsNullOrEmpty(guildId))
+                guildId = "@me";
             ulong channelId = Context.Interaction.ChannelId ?? 0UL;
             logger.LogInformation("App command context - GuildId: {GuildId}, ChannelId: {ChannelId}", guildId, channelId);
             var channelUrl = "https://discord.com/channels/" + Context.Interaction.GuildId + "/" + Context.Interaction.ChannelId;
