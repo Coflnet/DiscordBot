@@ -46,7 +46,6 @@ public partial class VpsCommands
         }
         [SlashCommand("tpm", "Create managed tpm instance on fast servers")]
         [DefaultMemberPermissions(GuildPermission.SendMessages)]
-        [RequireRole(869942341442600990)]
         public async Task VpsCreate([Autocomplete(typeof(McNameAutocompleteHandler))] string ign, ITextChannel? webHookChannel = null)
         {
             await VpsCreate("tpm", ign, webHookChannel);
