@@ -46,7 +46,7 @@ public class GithubCommands : InteractionModuleBase
             if (callingChannel == null)
                 throw new Exception("Calling channel is null");
             var lastMessage = callingChannel.GetMessagesAsync(1).FlattenAsync().Result.First();
-            var linkToMessage = lastMessage.GetJumpUrl().Replace("//", "/@me/");
+            var linkToMessage = lastMessage.GetJumpUrl().Replace("//", "/@me/").Replace(":/@me/", "://");
             body += "\ncontext:" + linkToMessage;
             canread = true;
         }
