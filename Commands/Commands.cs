@@ -106,6 +106,14 @@ public class Commands : InteractionModuleBase
         }
 
         var existing = await persistence.GetDiscordAccountInfo(Context.Interaction.User.Id) ?? new DiscordAccountInfo();
+        if (Context.Client is DiscordSocketClient socketClient)
+        {
+            userInfoUpdater.SetDiscordClient(socketClient);
+        }
+        else
+        {
+            logger.LogWarning("Client is not a DiscordSocketClient, cannot set discord client");
+        }
         await userInfoUpdater.UpdateuserDetails(Context.Interaction.User.Id, user, existing);
         await ModifyOriginalResponseAsync(msg =>
         {
