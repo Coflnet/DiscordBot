@@ -22,6 +22,7 @@ builder.Services.AddSingleton<IConnectApi, ConnectApi>(di => new ConnectApi(buil
 builder.Services.AddSingleton<Coflnet.Payments.Client.Api.IUserApi, Coflnet.Payments.Client.Api.UserApi>(di => new Coflnet.Payments.Client.Api.UserApi(builder.Configuration["PAYMENTS_BASE_URL"]));
 builder.Services.AddSingleton<Coflnet.Payments.Client.Api.ITransactionApi, Coflnet.Payments.Client.Api.TransactionApi>(di => new Coflnet.Payments.Client.Api.TransactionApi(builder.Configuration["PAYMENTS_BASE_URL"]));
 builder.Services.AddSingleton<Coflnet.Payments.Client.Api.ITopUpApi, Coflnet.Payments.Client.Api.TopUpApi>(di => new Coflnet.Payments.Client.Api.TopUpApi(builder.Configuration["PAYMENTS_BASE_URL"]));
+builder.Services.AddSingleton<Coflnet.Payments.Client.Api.IProductsApi, Coflnet.Payments.Client.Api.ProductsApi>(di => new Coflnet.Payments.Client.Api.ProductsApi(builder.Configuration["PAYMENTS_BASE_URL"]));
 builder.Services.AddSingleton<Coflnet.Sky.Settings.Client.Api.ISettingsApi, Coflnet.Sky.Settings.Client.Api.SettingsApi>(di => new Coflnet.Sky.Settings.Client.Api.SettingsApi(builder.Configuration["SETTINGS_BASE_URL"]));
 builder.Services.AddSingleton<ChatService>();
 builder.Services.AddSingleton<LokiQuery>();

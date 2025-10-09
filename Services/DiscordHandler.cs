@@ -399,6 +399,7 @@ public class DiscordHandler : BackgroundService
                 await Task.Delay(TimeSpan.FromSeconds(5));
             }
         }
+    }
 
     private async Task<string> ReplacePingsIgn(string message)
     {
