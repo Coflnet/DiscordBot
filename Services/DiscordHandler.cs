@@ -55,10 +55,10 @@ public class DiscordHandler : BackgroundService
             GatewayIntents = GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent,
             AlwaysDownloadUsers = true
         });
-    await client!.LoginAsync(TokenType.Bot, _config["BotToken"]);
-    // set intent to receive message
-    await client.StartAsync();
-    client!.Ready += Init;
+        await client!.LoginAsync(TokenType.Bot, _config["BotToken"]);
+        // set intent to receive message
+        await client.StartAsync();
+        client!.Ready += Init;
 
 
         client.MessageReceived += async (msg) =>
@@ -82,7 +82,7 @@ public class DiscordHandler : BackgroundService
 
     public async Task<IEnumerable<IMessage>> GetMessagesFromChannel(ulong channelId, ulong beforeMessageId = 0, int limit = 100)
     {
-    if (await client!.GetChannelAsync(channelId) is not IMessageChannel channel)
+        if (await client!.GetChannelAsync(channelId) is not IMessageChannel channel)
         {
             logger.LogError("Channel with ID {id} not found", channelId);
             return [];
@@ -96,7 +96,7 @@ public class DiscordHandler : BackgroundService
 
     public async Task<IMessage?> GetMessageFromChannel(ulong channelId, ulong messageId)
     {
-    if (await client!.GetChannelAsync(channelId) is not IMessageChannel channel)
+        if (await client!.GetChannelAsync(channelId) is not IMessageChannel channel)
         {
             logger.LogError("Channel with ID {id} not found", channelId);
             return null;
@@ -352,36 +352,53 @@ public class DiscordHandler : BackgroundService
         }
         var message = msg.Content;
         message = await ReplacePingsIgn(message);
-        try
+        if (profile.ExpiresAt < DateTime.UtcNow)
         {
-            if (profile.ExpiresAt < DateTime.UtcNow)
+            await userInfoUpdater.UpdatePremiumTierAndSave(profile);
+        }
+
+        int attempts = 0;
+        while (attempts < 3)
+        {
+            try
             {
-                await userInfoUpdater.UpdatePremiumTierAndSave(profile);
+                await chatService.Send(new()
+                {
+                    SenderUuid = profile.MinecraftUuid.ToString("n"),
+                    Message = message,
+                    SenderName = profile?.MinecraftName ?? msg.Author.Username,
+                    AccountTier = profile?.AccountTier ?? AccountTier.NONE
+                });
+                break; // success
             }
-            await chatService.Send(new()
+            catch (ApiException e)
             {
-                SenderUuid = profile.MinecraftUuid.ToString("n"),
-                Message = message,
-                SenderName = profile?.MinecraftName ?? msg.Author.Username,
-                AccountTier = profile?.AccountTier ?? AccountTier.NONE
-            });
-        }
-        catch (Coflnet.Core.ApiException e)
-        {
-            var handle = await msg.ReplyAsync(e.Message);
-            await msg.DeleteAsync();
-            _ = Task.Run(async () =>
+                attempts++;
+                if (attempts >= 3)
+                {
+                    var handle = await msg.ReplyAsync(e.Message);
+                    await msg.DeleteAsync();
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(30000);
+                        await handle.DeleteAsync();
+                    });
+                    return;
+                }
+                await Task.Delay(TimeSpan.FromSeconds(5));
+            }
+            catch (Exception e)
             {
-                await Task.Delay(30000);
-                await handle.DeleteAsync();
-            });
+                attempts++;
+                if (attempts >= 3)
+                {
+                    logger.LogError(e, "Error sending message to chat");
+                    await msg.ReplyAsync("Could not send message, <@267680402594988033> ");
+                    return;
+                }
+                await Task.Delay(TimeSpan.FromSeconds(5));
+            }
         }
-        catch (System.Exception e)
-        {
-            logger.LogError(e, "Error sending message to chat");
-            await msg.ReplyAsync("Could not send message, <@267680402594988033> ");
-        }
-    }
 
     private async Task<string> ReplacePingsIgn(string message)
     {
