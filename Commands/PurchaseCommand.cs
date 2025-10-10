@@ -2,6 +2,7 @@ using Discord;
 using Discord.Interactions;
 using Coflnet.Payments.Client.Api;
 using Coflnet.Payments.Client.Model;
+using Discord.WebSocket;
 
 namespace Coflnet.Discord;
 
@@ -158,17 +159,29 @@ public class PurchaseCommand : InteractionModuleBase
     [ComponentInteraction("purchase_confirm:*:*:*")]
     public async Task ConfirmPurchase(string productSlug, string countStr, string userIdStr)
     {
-        await DeferAsync(ephemeral: true);
+        var component = (SocketMessageComponent)Context.Interaction;
 
         // Verify the user clicking is the same as who initiated
         if (Context.User.Id.ToString() != userIdStr)
         {
-            await FollowupAsync("❌ You cannot confirm someone else's purchase!", ephemeral: true);
+            await component.RespondAsync("❌ You cannot confirm someone else's purchase!", ephemeral: true);
             return;
         }
 
+        // Acknowledge quickly and remove buttons from the original message to prevent double clicks
+        await component.DeferAsync(ephemeral: true);
         try
         {
+            try
+            {
+                await component.Message.ModifyAsync(msg =>
+                {
+                    msg.Content = "Processing your purchase...";
+                    msg.Components = new ComponentBuilder().Build();
+                });
+            }
+            catch { /* non-fatal if message modify fails */ }
+
             var count = int.Parse(countStr);
             var discordInfo = await persistence.GetDiscordAccountInfo(Context.User.Id);
             var userId = discordInfo?.UserId;
@@ -179,9 +192,8 @@ public class PurchaseCommand : InteractionModuleBase
                 return;
             }
 
-            // Execute the purchase
+            // Execute the purchase (may take time)
             var reference = $"discord_{Context.User.Id}_{DateTime.UtcNow:yyyyMMddHHmmss}";
-            
             await userApi.UserUserIdServicePurchaseProductSlugPostAsync(userId, productSlug, reference, count);
 
             // Get updated product info for success message
@@ -189,11 +201,10 @@ public class PurchaseCommand : InteractionModuleBase
             var product = adjustedProduct.ModifiedProduct;
             var totalCost = (long)(product.Cost * count);
             var timeSpan = TimeSpan.FromSeconds(product.OwnershipSeconds * count);
-            var duration = timeSpan < TimeSpan.FromDays(1) 
-                ? $"{(int)timeSpan.TotalHours} hour{(timeSpan.TotalHours == 1 ? "" : "s")}"
+            var duration = timeSpan < TimeSpan.FromDays(1)
+                ? $"{(int)timeSpan.TotalHours} hour{(timeSpan.TotalHours == 1 ? "" : "s")}" 
                 : $"{(int)timeSpan.TotalDays} day{(timeSpan.TotalDays == 1 ? "" : "s")}";
 
-            // Success embed
             var successEmbed = new EmbedBuilder()
                 .WithTitle("✅ Purchase Successful!")
                 .WithDescription($"**{product.Title}** has been activated!")
@@ -205,12 +216,20 @@ public class PurchaseCommand : InteractionModuleBase
                 .WithCurrentTimestamp()
                 .Build();
 
-            await ModifyOriginalResponseAsync(msg =>
+            // Send result as a followup message (ephemeral)
+            await FollowupAsync(embed: successEmbed, ephemeral: true);
+
+            // Try to update original message to show completion (best-effort)
+            try
             {
-                msg.Content = "✅ **Purchase completed!**";
-                msg.Embed = successEmbed;
-                msg.Components = new ComponentBuilder().Build(); // Remove buttons
-            });
+                await component.Message.ModifyAsync(msg =>
+                {
+                    msg.Content = "✅ **Purchase completed!**";
+                    msg.Embed = successEmbed;
+                    msg.Components = new ComponentBuilder().Build();
+                });
+            }
+            catch { }
 
             logger.LogInformation("User {discordId} ({userId}) purchased {count}x {product} for {cost} CoflCoins", 
                 Context.User.Id, userId, count, productSlug, totalCost);
@@ -218,7 +237,6 @@ public class PurchaseCommand : InteractionModuleBase
         catch (Payments.Client.Client.ApiException e)
         {
             var errorMessage = "An error occurred";
-            
             if (e.Message.Contains("insuficcient balance"))
             {
                 errorMessage = "❌ **Insufficient balance!**\n\nUse `/topup` to purchase more CoflCoins.";
@@ -233,24 +251,37 @@ public class PurchaseCommand : InteractionModuleBase
                 errorMessage = $"❌ **Error:** {msg}";
             }
 
-            await ModifyOriginalResponseAsync(msg =>
+            // Inform the user via followup
+            await FollowupAsync(errorMessage, ephemeral: true);
+
+            // Try to update original message to show error (best-effort)
+            try
             {
-                msg.Content = errorMessage;
-                msg.Embed = null;
-                msg.Components = new ComponentBuilder().Build();
-            });
+                await component.Message.ModifyAsync(msg =>
+                {
+                    msg.Content = errorMessage;
+                    msg.Embed = null;
+                    msg.Components = new ComponentBuilder().Build();
+                });
+            }
+            catch { }
 
             logger.LogError(e, "Purchase error for user {userId}: {error}", Context.User.Id, e.Message);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Unexpected error confirming purchase for user {userId}", Context.User.Id);
-            await ModifyOriginalResponseAsync(msg =>
+            await FollowupAsync("❌ **An unexpected error occurred.**\nPlease contact support if this issue persists.", ephemeral: true);
+            try
             {
-                msg.Content = "❌ **An unexpected error occurred.**\nPlease contact support if this issue persists.";
-                msg.Embed = null;
-                msg.Components = new ComponentBuilder().Build();
-            });
+                await component.Message.ModifyAsync(msg =>
+                {
+                    msg.Content = "❌ **An unexpected error occurred.**\nPlease contact support if this issue persists.";
+                    msg.Embed = null;
+                    msg.Components = new ComponentBuilder().Build();
+                });
+            }
+            catch { }
         }
     }
 
@@ -270,7 +301,7 @@ public class PurchaseCommand : InteractionModuleBase
             .WithCurrentTimestamp()
             .Build();
 
-        await ModifyOriginalResponseAsync(msg =>
+        await ((SocketMessageComponent)Context.Interaction).UpdateAsync(msg =>
         {
             msg.Content = "";
             msg.Embed = cancelEmbed;
