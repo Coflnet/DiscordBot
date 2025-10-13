@@ -51,6 +51,26 @@ public class PurchaseCommand : InteractionModuleBase
             if (productSlug == "prem+" || productSlug == "premium+")
                 productSlug = "premium_plus";
 
+            // Prevent too many users from purchasing pre_api (max 2 users)
+            if (productSlug == "pre_api")
+            {
+                try
+                {
+                    var currentCount = await productsApi.ProductsServiceServiceSlugCountGetAsync("pre_api");
+                    if (currentCount >= 2)
+                    {
+                        await FollowupAsync($"❌ Pre API access is limited to at most 2 people. Its already used by 2 users, please check again in 20 minutes.", ephemeral: true);
+                        return;
+                    }
+                }
+                catch (Payments.Client.Client.ApiException e)
+                {
+                    logger.LogWarning(e, "Could not retrieve pre_api usage count");
+                    await FollowupAsync("❌ Could not check Pre API availability. Please try again later.", ephemeral: true);
+                    return;
+                }
+            }
+
             // Get Discord account info to find user ID
             var discordInfo = await persistence.GetDiscordAccountInfo(Context.User.Id);
             if (discordInfo?.MinecraftName == null)
@@ -193,6 +213,37 @@ public class PurchaseCommand : InteractionModuleBase
             }
 
             // Execute the purchase (may take time)
+            // Double-check pre_api availability to avoid race conditions (max 2 users)
+            if (productSlug == "pre_api")
+            {
+                try
+                {
+                    var currentCount = await productsApi.ProductsServiceServiceSlugCountGetAsync("pre_api");
+                    if (currentCount >= 2)
+                    {
+                        var msg = $"❌ Pre API access is limited to at most 2 people. Its already full. Please try again in half an hour. Purchase cancelled.";
+                        await FollowupAsync(msg, ephemeral: true);
+                        try
+                        {
+                            await component.Message.ModifyAsync(m =>
+                            {
+                                m.Content = msg;
+                                m.Embed = null;
+                                m.Components = new ComponentBuilder().Build();
+                            });
+                        }
+                        catch { }
+                        return;
+                    }
+                }
+                catch (Payments.Client.Client.ApiException e)
+                {
+                    logger.LogWarning(e, "Could not retrieve pre_api usage count at confirm step");
+                    await FollowupAsync("❌ Could not check Pre API availability. Please try again later.", ephemeral: true);
+                    return;
+                }
+            }
+
             var reference = $"discord_{Context.User.Id}_{DateTime.UtcNow:yyyyMMddHHmmss}";
             await userApi.UserUserIdServicePurchaseProductSlugPostAsync(userId, productSlug, reference, count);
 
