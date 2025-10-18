@@ -126,9 +126,24 @@ public class Commands : InteractionModuleBase
     }
 
     [SlashCommand("run", "Run a command as one of your minecraft accounts", true)]
-    public async Task RunCommand([Summary("command", "The command to run")] string command, [Summary("player", "Command to run"), Autocomplete,] string playerName)
+    public async Task RunCommand([Summary("command", "The command to run")] string command, [Summary("player", "Command to run"), Autocomplete,] string? playerName = null)
     {
         await DeferAsync(ephemeral: true);
+        var profile = await persistence.GetDiscordAccountInfo(Context.Interaction.User.Id);
+        if (profile == null)
+        {
+            await FollowupAsync("You have no linked any Minecraft accounts, please run `/update-mc-user` first");
+            return;
+        }
+        if(playerName == null)
+        {
+            playerName = profile?.MinecraftName;
+            if(playerName == null)
+            {
+                await FollowupAsync("You have no linked any Minecraft accounts, please run `/update-mc-user` first");
+                return;
+            }
+        }
         var user = (await searchApi.ApiSearchPlayerPlayerNameGetAsync(playerName)).First();
         if (user == null)
         {
@@ -136,8 +151,7 @@ public class Commands : InteractionModuleBase
             return;
         }
         var accountUuid = Guid.Parse(user.Uuid);
-        var profile = await persistence.GetDiscordAccountInfo(Context.Interaction.User.Id);
-        if (!profile.MinecraftUuids.Contains(accountUuid))
+        if (!profile!.MinecraftUuids.Contains(accountUuid))
         {
             await FollowupAsync("", embed: new EmbedBuilder()
                 .WithTitle("Error")
