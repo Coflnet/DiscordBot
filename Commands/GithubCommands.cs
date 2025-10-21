@@ -65,16 +65,28 @@ public class GithubCommands : InteractionModuleBase
         {
             Body = body,
         };
-        var issue = await github.Issue.Create("Coflnet", repo, newIssue);
-
-        // assign Ekwav
-        await github.Issue.Assignee.AddAssignees("Coflnet", repo, issue.Number, new(["Ekwav"]));
-        Console.WriteLine("Created issue " + issue.NodeId);
-
-        // assign issue onto first project board in organization with memex
         try
         {
+            var issue = await github.Issue.Create("Coflnet", repo, newIssue);
+
+            // assign Ekwav
+            await github.Issue.Assignee.AddAssignees("Coflnet", repo, issue.Number, new(["Ekwav"]));
+            Console.WriteLine("Created issue " + issue.NodeId);
+
+            // assign issue onto first project board in organization with memex
             await PutIssueOnBoard(issue.NodeId);
+            
+            await FollowupAsync("", embed: new EmbedBuilder()
+                .WithTitle("Issue created")
+                .WithDescription($"Issue created at https://github.com/Coflnet/{repo}/issues/{issue.Number}")
+                .WithColor(Color.Green)
+                .Build(), ephemeral: !canread);
+        }
+        catch (ApiException apiEx)
+        {
+            logger.LogError(apiEx, "GitHub API error creating issue in repo {Repo}", repo);
+            await FollowupAsync($"Error creating issue in repository '{repo}': {apiEx.Message}", ephemeral: true);
+            return;
         }
         catch (Exception e)
         {
@@ -82,11 +94,6 @@ public class GithubCommands : InteractionModuleBase
             throw;
         }
 
-        await FollowupAsync("", embed: new EmbedBuilder()
-            .WithTitle("Issue created")
-            .WithDescription($"Issue created at https://github.com/Coflnet/{repo}/issues/{issue.Number}")
-            .WithColor(Color.Green)
-            .Build(), ephemeral: !canread);
     }
 
     private async Task PutIssueOnBoard(string issueId)
