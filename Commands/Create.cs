@@ -295,7 +295,8 @@ public partial class VpsCommands
                         msg.Embed = new EmbedBuilder()
                         {
                             Title = "Setup completed",
-                            Description = $"Your instance is ready to use, you can now use `/vps info` and `/vps log`",
+                            Description = $"Your instance is ready to use, you can now use `/vps info` and `/vps log`\n"
+                                + "Start and stop anytime with `/vps start` and `/vps stop`\n",
                             Color = Color.Green
                         }.Build();
                         msg.Components = button.Build();
