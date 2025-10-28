@@ -109,6 +109,22 @@ public partial class VpsCommands
                     await HandleLogin(ign, instance.First());
                     return;
                 }
+                if (kind != instance.First().AppKind)
+                {
+                    await ModifyOriginalResponseAsync(msg =>
+                    {
+                        msg.Content = "You already have an instance running with different kind";
+                        msg.Embed = new EmbedBuilder()
+                        {
+                            Title = "Instance kind mismatch",
+                            Description = $"You already have an instance running of kind `{instance.First().AppKind}`, but you are trying to create a `{kind}` instance.\n"
+                            + $"Having multiple instances is not supported\n"
+                            + $"You can use `/vps reset` to change the instance kind",
+                            Color = Color.Red
+                        }.Build();
+                    });
+                    return;
+                }
                 if (instance.First().PaidUntil > DateTime.UtcNow)
                     await ModifyOriginalResponseAsync(msg =>
                     {
@@ -124,6 +140,7 @@ public partial class VpsCommands
                 else
                     await ModifyOriginalResponseAsync(msg =>
                     {
+
                         msg.Content = "Your vps has expired, please extend your instance with `/vps info`";
                         msg.Components = new ComponentBuilder()
                             .WithButton("Extend 30 days (Costs CoflCoins)", "renew-vps", ButtonStyle.Primary)
