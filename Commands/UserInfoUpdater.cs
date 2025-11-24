@@ -39,7 +39,7 @@ public class UserInfoUpdater
         existing.DiscordId = discordId;
         existing.MinecraftUuids ??= new List<Guid>();
         existing.MinecraftUuid = Guid.Parse(user.Uuid);
-        if(!existing.MinecraftUuids.Contains(existing.MinecraftUuid))
+        if (!existing.MinecraftUuids.Contains(existing.MinecraftUuid))
             existing.MinecraftUuids.Add(existing.MinecraftUuid);
         var ignName = user.Name;
         existing.MinecraftName = ignName;
@@ -68,7 +68,8 @@ public class UserInfoUpdater
             existing.ExpiresAt = DateTime.UtcNow + TimeSpan.FromMinutes(15);
         }
         await persistence.SaveDiscordAccountInfo(existing);
-        await EnsureFlipperRole(existing.DiscordId, existing.AccountTier);
+        if (existing.ExpiresAt > DateTime.UtcNow + TimeSpan.FromDays(3))
+            await EnsureFlipperRole(existing.DiscordId, existing.AccountTier);
     }
 
     internal async Task UpdateUserDetails(Discord.WebSocket.DiscordSocketClient client, string uuid, string name)
