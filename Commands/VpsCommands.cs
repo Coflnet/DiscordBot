@@ -124,6 +124,109 @@ public partial class VpsCommands : InteractionModuleBase
         await FollowupAsync(embed: embed, components: components, ephemeral: true);
     }
 
+    [SlashCommand("help", "Get help about vps commands or a specific setting")]
+    public async Task VpsHelp([Autocomplete] string? setting = null)
+    {
+        _ = DeferAsync(ephemeral: true);
+
+        if (string.IsNullOrEmpty(setting))
+        {
+            // No setting specified - show general help
+            var helpEmbed = new EmbedBuilder()
+                .WithTitle("VPS Commands Help")
+                .WithDescription("Here's how to use the VPS commands:")
+                .WithColor(Color.Blue)
+                .AddField("/vps start", "Start your VPS instance. You'll be guided through the login process if needed.", inline: false)
+                .AddField("/vps stop", "Stop your VPS instance.", inline: false)
+                .AddField("/vps info", "View your current VPS settings and instance information.", inline: false)
+                .AddField("/vps set <setting> [value]", "Change a VPS setting. Use autocomplete to see available settings. If no value is provided, boolean settings will be toggled.", inline: false)
+                .AddField("/vps help [setting]", "Show this help message, or get detailed info about a specific setting.", inline: false)
+                .AddField("/vps log", "View recent logs from your VPS.", inline: false)
+                .AddField("/vps log-file", "Download a full log file from your VPS.", inline: false)
+                .AddField("/vps reset", "Reset your VPS settings to default. Can optionally reset login info or switch instance type.", inline: false)
+                .AddField("/vps import", "Import VPS settings from a JSON file (e.g., exported from TPM).", inline: false)
+                .AddField("/vps export", "Export your VPS settings as a JSON file.", inline: false)
+                .AddField("💡 Tip", "Use `/vps help <setting>` to get detailed information about a specific setting, including its type and valid values.", inline: false)
+                .Build();
+
+            await FollowupAsync(embed: helpEmbed, ephemeral: true);
+            return;
+        }
+
+        var settingsResponse = await vpsApi.VpsSettingsGetAsync();
+        if (!settingsResponse.TryOk(out var settings))
+        {
+            await FollowupAsync("Failed to get settings information", ephemeral: true);
+            return;
+        }
+
+        if (!settings.TryGetValue(setting, out var settingDoc))
+        {
+            KeyValuePair<string, SettingDoc> match = FindPartialMatch(setting, settings);
+            if (match.Value == null)
+            {
+                await FollowupAsync($"Setting `{setting}` not found. Use `/vps help` without a parameter to see available commands, or check the autocomplete for valid settings.", ephemeral: true);
+                return;
+            }
+            setting = match.Key;
+            settingDoc = match.Value;
+        }
+
+        var typeDescription = settingDoc.Type switch
+        {
+            "String[]" => "**Array of strings** - Separate multiple values with commas\nExample: `/vps set {0} value1,value2,value3`",
+            "Object[]" => "**Array of objects** - Separate multiple values with commas\nExample: `/vps set {0} value1,value2`",
+            "Boolean" => "**Boolean** - Use `true` or `false`\nExample: `/vps set {0} true`\nOr omit the value to toggle: `/vps set {0}`",
+            "Dictionary`2" => "**Key-Value pairs** - Separate key and value with space\nTo add/update: `/vps set {0} key value`\nTo remove a key: `/vps set {0} key` (no value)",
+            "Int32" or "Int64" => "**Number** - Enter a whole number\nExample: `/vps set {0} 42`",
+            "Double" => "**Decimal number** - Enter a number\nExample: `/vps set {0} 3.14`",
+            _ => "**Text** - Enter any text value\nExample: `/vps set {0} your_value`"
+        };
+
+        var settingEmbed = new EmbedBuilder()
+            .WithTitle($"{settingDoc.Prefix}{settingDoc.RealName}")
+            .WithColor(Color.Green);
+
+        if (!string.IsNullOrWhiteSpace(settingDoc.Info))
+        {
+            settingEmbed.WithDescription(settingDoc.Info);
+        }
+
+        settingEmbed.AddField("Setting Key", $"`{setting}`", inline: true);
+        settingEmbed.AddField("Type", settingDoc.Type ?? "Text", inline: true);
+        settingEmbed.AddField("Usage", string.Format(typeDescription, setting), inline: false);
+
+        await FollowupAsync(embed: settingEmbed.Build(), ephemeral: true);
+
+        static KeyValuePair<string, SettingDoc> FindPartialMatch(string setting, Dictionary<string, SettingDoc> settings)
+        {
+            // Try to find a partial match
+            return settings.FirstOrDefault(s => s.Key.Equals(setting, StringComparison.OrdinalIgnoreCase) ||
+                                                      s.Value.RealName?.Equals(setting, StringComparison.OrdinalIgnoreCase) == true);
+        }
+    }
+
+    [AutocompleteCommand("setting", "help")]
+    public async Task HelpAutocomplete()
+    {
+        var interaction = (Context.Interaction as SocketAutocompleteInteraction) ?? throw new InvalidOperationException("Interaction is not an autocomplete interaction");
+        string userInput = interaction.Data.Current.Value.ToString() ?? "";
+        var response = await vpsApi.VpsSettingsGetAsync();
+        if (!response.TryOk(out var options))
+        {
+            await interaction.RespondAsync(new[] { new AutocompleteResult("Failed to get settings", "error") });
+            return;
+        }
+        var transformed = options.Where(o => !o.Value.Hide!.Value).Select(o => new AutocompleteResult($"{o.Value.Prefix}{o.Value.RealName} - {o.Value.Info ?? "No description"}", o.Key));
+        if (string.IsNullOrEmpty(userInput))
+        {
+            await interaction.RespondAsync(transformed.Take(25));
+            return;
+        }
+
+        await interaction.RespondAsync(transformed.Where(o => o.Name.Contains(userInput, StringComparison.OrdinalIgnoreCase)).Take(25));
+    }
+
     private static MessageComponent GetPageSwitch(int page, bool hideExtend = true)
     {
         var builder = new ComponentBuilder()
