@@ -217,7 +217,7 @@ public partial class VpsCommands : InteractionModuleBase
             await interaction.RespondAsync(new[] { new AutocompleteResult("Failed to get settings", "error") });
             return;
         }
-        var transformed = options.Where(o => !o.Value.Hide!.Value).Select(o => new AutocompleteResult($"{o.Value.Prefix}{o.Value.RealName} - {o.Value.Info ?? "No description"}", o.Key));
+        var transformed = options.Where(o => !o.Value.Hide!.Value).Select(o => new AutocompleteResult($"{o.Value.Prefix}{o.Value.RealName}", o.Key));
         if (string.IsNullOrEmpty(userInput))
         {
             await interaction.RespondAsync(transformed.Take(25));
