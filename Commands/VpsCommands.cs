@@ -177,7 +177,7 @@ public partial class VpsCommands : InteractionModuleBase
             "String[]" => "**Array of strings** - Separate multiple values with commas\nExample: `/vps set {0} value1,value2,value3`",
             "Object[]" => "**Array of objects** - Separate multiple values with commas\nExample: `/vps set {0} value1,value2`",
             "Boolean" => "**Boolean** - Use `true` or `false`\nExample: `/vps set {0} true`\nOr omit the value to toggle: `/vps set {0}`",
-            "Dictionary`2" => "**Key-Value pairs** - Separate key and value with space\nTo add/update: `/vps set {0} key value`\nTo remove a key: `/vps set {0} key` (no value)",
+            "Dictionary`2" => "**Key-Value pairs** - Separate key and value with space\nTo add/update: `/vps set {0} key value`\nTo remove a key: `/vps set {0} rm key` (prefix value to remove)",
             "Int32" or "Int64" => "**Number** - Enter a whole number\nExample: `/vps set {0} 42`",
             "Double" => "**Decimal number** - Enter a number\nExample: `/vps set {0} 3.14`",
             _ => "**Text** - Enter any text value\nExample: `/vps set {0} your_value`"
