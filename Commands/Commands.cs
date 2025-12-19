@@ -135,10 +135,10 @@ public class Commands : InteractionModuleBase
             await FollowupAsync("You have no linked any Minecraft accounts, please run `/update-mc-user` first");
             return;
         }
-        if(playerName == null)
+        if (playerName == null)
         {
             playerName = profile?.MinecraftName;
-            if(playerName == null)
+            if (playerName == null)
             {
                 await FollowupAsync("You have no linked any Minecraft accounts, please run `/update-mc-user` first");
                 return;
@@ -234,6 +234,46 @@ public class Commands : InteractionModuleBase
             .WithDescription($"Compensated {userId} with {parsedAmount} - {reason}")
             .WithColor(Color.Green)
             .Build());
+    }
+
+    [SlashCommand("delete-bot-messages", "Delete messages from a bot/app in the current channel", true)]
+    [DefaultMemberPermissions(GuildPermission.Administrator)]
+    [CommandContextType(InteractionContextType.Guild)]
+    public async Task DeleteBotMessages([Summary("bot", "The bot/app user to delete messages from")] IUser bot, [Summary("limit", "Number of messages to check (max 100)")] int limit = 100)
+    {
+        await DeferAsync(ephemeral: true);
+
+        if (!bot.IsBot)
+        {
+            await FollowupAsync("The specified user is not a bot", ephemeral: true);
+            return;
+        }
+
+        if (limit < 1 || limit > 100)
+        {
+            await FollowupAsync("Limit must be between 1 and 100", ephemeral: true);
+            return;
+        }
+
+        var channel = Context.Channel as ITextChannel;
+        if (channel == null)
+        {
+            await FollowupAsync("This command can only be used in text channels", ephemeral: true);
+            return;
+        }
+
+        var messages = await channel.GetMessagesAsync(limit).FlattenAsync();
+        var botMessages = messages.Where(m => m.Author.Id == bot.Id && (DateTimeOffset.UtcNow - m.CreatedAt).TotalDays < 14).ToList();
+
+        if (botMessages.Count == 0)
+        {
+            await FollowupAsync($"No messages from {bot.Username} found in the last {limit} messages", ephemeral: true);
+            return;
+        }
+
+        await channel.DeleteMessagesAsync(botMessages);
+
+        await FollowupAsync($"Deleted {botMessages.Count} message(s) from {bot.Username}", ephemeral: true);
     }
 
     [SlashCommand("revert", "Revert a transactions", true)]
