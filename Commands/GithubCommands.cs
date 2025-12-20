@@ -46,8 +46,7 @@ public class GithubCommands : InteractionModuleBase
             if (callingChannel == null)
                 throw new Exception("Calling channel is null");
             var lastMessage = callingChannel.GetMessagesAsync(1).FlattenAsync().Result.First();
-            var linkToMessage = lastMessage.GetJumpUrl().Replace("//", "/@me/").Replace(":/@me/", "://");
-            body += "\ncontext:" + linkToMessage;
+            body += "\ncontext:" + lastMessage.GetJumpUrl();
             canread = true;
         }
         catch (Exception e)
@@ -61,6 +60,7 @@ public class GithubCommands : InteractionModuleBase
             var channelUrl = "https://discord.com/channels/" + Context.Interaction.GuildId + "/" + Context.Interaction.ChannelId;
             body += $"\ncontext: {channelUrl}";
         }
+        body.Replace(" https://discord.com/channels//", "https://discord.com/channels/@me/"); // dm messages
         var newIssue = new NewIssue(title)
         {
             Body = body,
