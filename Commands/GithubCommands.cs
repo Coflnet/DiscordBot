@@ -60,7 +60,7 @@ public class GithubCommands : InteractionModuleBase
             var channelUrl = "https://discord.com/channels/" + Context.Interaction.GuildId + "/" + Context.Interaction.ChannelId;
             body += $"\ncontext: {channelUrl}";
         }
-        body.Replace(" https://discord.com/channels//", "https://discord.com/channels/@me/"); // dm messages
+        body = body.Replace(" https://discord.com/channels//", "https://discord.com/channels/@me/"); // dm messages
         var newIssue = new NewIssue(title)
         {
             Body = body,
