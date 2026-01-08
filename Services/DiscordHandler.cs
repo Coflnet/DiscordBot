@@ -121,7 +121,7 @@ public class DiscordHandler : BackgroundService
         {
             var profilePicture = $"https://mc-heads.net/avatar/{message.Uuid}";
             // replace all §[a-f0-9] with empty string
-            var messageContent = Regex.Replace(message.Message, "§[a-f0-9]", "");
+            var messageContent = Regex.Replace(message.Message, "§[a-f0-9r]", "");
             foreach (var target in ChatWebhooks)
             {
                 var content = JsonConvert.SerializeObject(new
