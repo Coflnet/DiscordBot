@@ -284,6 +284,45 @@ public class DiscordHandler : BackgroundService
         var channelName = (msg.Channel as SocketGuildChannel)?.Name;
         var mentionsToName = msg.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
         Console.WriteLine(msg.Content + " in " + channelName);
+        
+        // Check for suspicious hacked account messages: empty content + 4 image attachments
+        if (string.IsNullOrWhiteSpace(msg.Content) && msg.Attachments.Count == 4)
+        {
+            // Check if all attachments are images
+            bool allImages = msg.Attachments.All(att => 
+                att.ContentType?.StartsWith("image/") == true);
+            
+            if (allImages)
+            {
+                logger.LogWarning("Detected suspicious message from user {userId} ({userName}) with 4 image attachments and no text content. Scheduling for deletion.", 
+                    msg.Author.Id, msg.Author.Username);
+                
+                // Schedule deletion after 5 minutes
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await msg.DeleteAsync();
+                        logger.LogInformation("Deleted suspicious message {messageId} from user {userId}", msg.Id, msg.Author.Id);
+                        
+                        // Optionally timeout the user
+                        if (msg.Author is SocketGuildUser guildUser)
+                        {
+                            await guildUser.SetTimeOutAsync(TimeSpan.FromHours(1));
+                            await msg.Author.SendMessageAsync(
+                                "Your account appears to have been compromised. A message with only images was detected and removed. " +
+                                "Please secure your account immediately. You have been timed out for 1 hour.");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to delete suspicious message {messageId}", msg.Id);
+                    }
+                });
+                return;
+            }
+        }
+        
         await persistence.SaveDiscordMessage(MessageController.MapMessage(msg, mentionsToName));
         if (msg.Content.Contains("steamcommunity.com"))
         {
