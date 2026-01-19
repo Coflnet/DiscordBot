@@ -273,7 +273,7 @@ public partial class VpsCommands
                 {
                     var referenceId = Guid.NewGuid();
                     logger.LogInformation("Failed to get login link {lines} for {instance}, referenceId: {refernceId}", string.Join("\n", lines), newInstance.Id, referenceId);
-                    await ModifyOriginalResponseAsync(msg => msg.Content = $"Failed to get login link, please check `/vps log`, try again (with `/vps start`) or ask Äkwav to help and give him `{referenceId}`");
+                    await ModifyOriginalResponseAsync(msg => msg.Content = $"Failed to get login link, please check `/vps log`, try again (with `/vps start` or reset with `/vps reset reset-login:True`) or ask Äkwav to help and give him `{referenceId}`");
                     return false;
                 }
                 else
