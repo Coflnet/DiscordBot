@@ -454,7 +454,10 @@ public partial class VpsCommands : InteractionModuleBase
                     Setting = "igns",
                     Value = igns
                 }));
-            await FollowupAsync("Reset general config, copied over ign and webhooks", ephemeral: true);
+            var message = "Reset general config, copied over ign and webhooks";
+            if(!resetLogin)
+                message += ", login details (selected account) preserved";
+            await FollowupAsync(message, ephemeral: true);
         }
         await vpsApi.VpsUserInstanceIdTurnOnPostAsync(userId, target);
     }
