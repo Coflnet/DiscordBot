@@ -403,8 +403,12 @@ public partial class VpsCommands : InteractionModuleBase
     {
         (string userId, Guid target) = await GetInstanceId();
         if (target == default)
+        {
+            // User has no VPS
+            await FollowupAsync("You do not have a VPS instance to reset.", ephemeral: true);
             return;
-
+        }
+        await vpsApi.VpsUserInstanceIdTurnOffPostAsync(userId, target);
         if (instanceType != null)
         {
             var instanceData = await vpsApi.VpsInstancesGetAsync(userId);
@@ -455,7 +459,7 @@ public partial class VpsCommands : InteractionModuleBase
                     Value = igns
                 }));
             var message = "Reset general config, copied over ign and webhooks";
-            if(!resetLogin)
+            if (!resetLogin)
                 message += ", login details (selected account) preserved";
             await FollowupAsync(message, ephemeral: true);
         }
@@ -616,10 +620,10 @@ public partial class VpsCommands : InteractionModuleBase
     {
         (string userId, Guid target) = await GetInstanceId();
 
-            await ResetUserLogin(userId);
+        await ResetUserLogin(userId);
         var originalContext = Context.Interaction as SocketMessageComponent;
-        
-        await originalContext!.ModifyOriginalResponseAsync(m=>
+
+        await originalContext!.ModifyOriginalResponseAsync(m =>
         {
             m.Embed = new EmbedBuilder()
                 .WithTitle("Reset Login")
