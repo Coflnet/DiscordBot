@@ -252,6 +252,14 @@ public partial class VpsCommands : InteractionModuleBase
             await FollowupAsync("Failed to get instance", ephemeral: true);
             return null;
         }
+        if(string.IsNullOrEmpty(instance.GetValueOrDefault("discordID")))
+        {
+            await vpsApi.VpsUserInstanceIdSetPostAsync(user.UserId, target.Id!.Value, new(new()
+            {
+                Setting = "discordId",
+                Value = user.DiscordId.ToString()
+            }));
+        }
         var combined = instance.Select(i => (i, settings[i.Key])).ToList();
         var timestamp = new DateTimeOffset(target.PaidUntil!.Value).ToUnixTimeSeconds();
         var desc = $"Instance id: `{target.Id.ToString()?.TakeLast(3).Aggregate("", (s, c) => s + c)}`\n" +
