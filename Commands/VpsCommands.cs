@@ -483,9 +483,21 @@ public partial class VpsCommands : InteractionModuleBase
     [SlashCommand("start", "Start vps")]
     public async Task VpsStart()
     {
-        (string userId, Guid target) = await GetInstanceId();
+            await DeferAsync(ephemeral: true);
+        (var profile, var instance) = await GetInstance();
+        var userId = profile.UserId;
+        var target = instance.Id!.Value;
         if (target == default)
             return;
+        if(instance.PaidUntil < DateTime.UtcNow)
+        {
+            var message = $"Your VPS instance has expired at <t:{new DateTimeOffset(instance.PaidUntil?? DateTime.UtcNow).ToUnixTimeSeconds()}>. Please extend to start the instance.";
+            var component = new ComponentBuilder()
+                .WithButton("Extend", "renew-vps", ButtonStyle.Primary)
+                .Build();
+            await FollowupAsync(message, ephemeral: true, components: component);
+            return;
+        }
         var answer = await vpsApi.VpsUserInstanceIdTurnOnPostAsync(userId, target);
         if (!answer.IsOk)
         {
