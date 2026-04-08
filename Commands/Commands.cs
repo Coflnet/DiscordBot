@@ -193,18 +193,26 @@ public class Commands : InteractionModuleBase
             await RespondAsync("You need to be a moderator to use this command", ephemeral: true);
             return;
         }
-        var userId = await FindUserId(user);
-        if (userId == null)
+        try
         {
-            return;
+            var userId = await FindUserId(user);
+            if (userId == null)
+            {
+                return;
+            }
+            logger.LogInformation("User {userId} ({id}) requested transactions of {user}", Context.User.GlobalName, Context.User.Id, userId);
+            var transactions = await transactionApi.TransactionUUserIdGetAsync(userId, 0, 10);
+            await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
+                .WithTitle("Transactions for " + userId)
+                .WithDescription(string.Join("\n", transactions.Select(t => $"{t.Id} {t.TimeStamp} {t.Amount} {t.ProductId} - {t.Reference}")))
+                .WithColor(Color.Green)
+                .Build());
         }
-        logger.LogInformation("User {userId} ({id}) requested transactions of {user}", Context.User.GlobalName, Context.User.Id, userId);
-        var transactions = await transactionApi.TransactionUUserIdGetAsync(userId, 0, 10);
-        await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
-            .WithTitle("Transactions for " + userId)
-            .WithDescription(string.Join("\n", transactions.Select(t => $"{t.Id} {t.TimeStamp} {t.Amount} {t.ProductId} - {t.Reference}")))
-            .WithColor(Color.Green)
-            .Build());
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error executing transactions command for {user}", user);
+            try { await FollowupAsync("An error occurred while fetching transactions", ephemeral: true); } catch { }
+        }
     }
 
     [SlashCommand("compensate", "Compensate a user", true)]
@@ -212,28 +220,36 @@ public class Commands : InteractionModuleBase
     [RequireRole(842102236024930304)]
     public async Task Compensate(string user, string amount, string reason)
     {
-        var userId = await FindUserId(user);
-        if (userId == null)
+        try
         {
-            return;
+            var userId = await FindUserId(user);
+            if (userId == null)
+            {
+                return;
+            }
+            if (!int.TryParse(amount, out var parsedAmount))
+            {
+                await FollowupAsync("Invalid amount");
+                return;
+            }
+            await topUpApi.TopUpCustomPostAsync(userId, new()
+            {
+                Amount = parsedAmount,
+                ProductId = "compensation",
+                Reference = reason
+            });
+            logger.LogInformation("User {userId} ({id}) compensated {user} with {amount} by {executor}", Context.User.GlobalName, Context.User.Id, userId, parsedAmount, Context.User.Id);
+            await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
+                .WithTitle("Compensated " + userId)
+                .WithDescription($"Compensated {userId} with {parsedAmount} - {reason}")
+                .WithColor(Color.Green)
+                .Build());
         }
-        if (!int.TryParse(amount, out var parsedAmount))
+        catch (Exception ex)
         {
-            await FollowupAsync("Invalid amount");
-            return;
+            logger.LogError(ex, "Error executing compensate command for {user}", user);
+            try { await FollowupAsync("An error occurred while compensating user", ephemeral: true); } catch { }
         }
-        await topUpApi.TopUpCustomPostAsync(userId, new()
-        {
-            Amount = parsedAmount,
-            ProductId = "compensation",
-            Reference = reason
-        });
-        logger.LogInformation("User {userId} ({id}) compensated {user} with {amount} by {executor}", Context.User.GlobalName, Context.User.Id, userId, parsedAmount, Context.User.Id);
-        await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
-            .WithTitle("Compensated " + userId)
-            .WithDescription($"Compensated {userId} with {parsedAmount} - {reason}")
-            .WithColor(Color.Green)
-            .Build());
     }
 
     [SlashCommand("delete-bot-messages", "Delete messages from a bot/app in the current channel", true)]
@@ -281,27 +297,42 @@ public class Commands : InteractionModuleBase
     [RequireRole(842102236024930304)]
     public async Task RevertTransaction(string user, string transactionId)
     {
-        var userId = await FindUserId(user);
-        if (userId == null)
+        try
         {
-            return;
+            var userId = await FindUserId(user);
+            if (userId == null)
+            {
+                return;
+            }
+            if (!int.TryParse(transactionId, out var parsedId))
+            {
+                await FollowupAsync("Invalid transaction id");
+                return;
+            }
+            var transaction = await userApi.UserUserIdTransactionIdDeleteAsync(userId.ToString(), parsedId);
+            await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
+                .WithTitle("Reverted " + transactionId)
+                .WithDescription($"Reverted transaction {transactionId} for {userId}, changed {transaction.Amount} {transaction.Id} - {transaction.Reference}")
+                .WithColor(Color.Green)
+                .Build());
         }
-        if (!int.TryParse(transactionId, out var parsedId))
+        catch (Exception ex)
         {
-            await FollowupAsync("Invalid transaction id");
-            return;
+            logger.LogError(ex, "Error executing revert command for {user}", user);
+            try { await FollowupAsync("An error occurred while reverting transaction", ephemeral: true); } catch { }
         }
-        var transaction = await userApi.UserUserIdTransactionIdDeleteAsync(userId.ToString(), parsedId);
-        await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
-            .WithTitle("Reverted " + transactionId)
-            .WithDescription($"Reverted transaction {transactionId} for {userId}, changed {transaction.Amount} {transaction.Id} - {transaction.Reference}")
-            .WithColor(Color.Green)
-            .Build());
     }
 
     private async Task<string?> FindUserId(string user)
     {
-        await DeferAsync(true);
+        try
+        {
+            await DeferAsync(true);
+        }
+        catch (Discord.Net.HttpException ex) when (ex.DiscordCode == DiscordErrorCode.InteractionHasAlreadyBeenAcknowledged)
+        {
+            // Already acknowledged, continue
+        }
         if (user.Contains('@'))
         {
             return await GetUserFromEmail(user);

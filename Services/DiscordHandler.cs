@@ -284,6 +284,50 @@ public class DiscordHandler : BackgroundService
         var channelName = (msg.Channel as SocketGuildChannel)?.Name;
         var mentionsToName = msg.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
         Console.WriteLine(msg.Content + " in " + channelName);
+
+        if ((msg.Channel as SocketGuildChannel)?.Guild is SocketGuild guild
+            && msg.Author is SocketGuildUser compromisedGuildUser
+            && IsBroWithFourImages(msg))
+        {
+            var hasMessageInLast24Hours = await UserHasRecentMessageInGuild(guild, msg.Author.Id, DateTimeOffset.UtcNow.AddHours(-24), msg.Id);
+            if (!hasMessageInLast24Hours)
+            {
+                logger.LogWarning("Detected likely compromised account pattern from user {userId} ({userName}): 'bro' with 4 images and no activity in the last 24 hours.",
+                    msg.Author.Id, msg.Author.Username);
+
+                try
+                {
+                    await msg.DeleteAsync();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to delete suspicious compromised-account message {messageId}", msg.Id);
+                }
+
+                try
+                {
+                    await msg.Author.SendMessageAsync(
+                        "Your account appears to have been compromised. We removed a suspicious message and kicked you for safety. " +
+                        "You can join back any time using the invite at https://sky.coflnet.com");
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Could not send compromised-account DM to user {userId}", msg.Author.Id);
+                }
+
+                try
+                {
+                    await compromisedGuildUser.KickAsync("Likely compromised account: 'bro' + 4 images + no message activity in 24h");
+                    logger.LogInformation("Kicked user {userId} for likely compromised-account behavior", msg.Author.Id);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to kick likely compromised user {userId}", msg.Author.Id);
+                }
+
+                return;
+            }
+        }
         
         // Check for suspicious hacked account messages: empty content + 4 image attachments
         if (string.IsNullOrWhiteSpace(msg.Content) && msg.Attachments.Count == 4)
@@ -363,6 +407,50 @@ public class DiscordHandler : BackgroundService
             await msg.Channel.SendMessageAsync(string.Join("\n", responses), messageReference: msg.Reference);
             await msg.DeleteAsync(new() { AuditLogReason = "Quick response" });
         }
+    }
+
+    private static bool IsBroWithFourImages(SocketMessage msg)
+    {
+        return string.Equals(msg.Content.Trim(), "bro", StringComparison.OrdinalIgnoreCase)
+            && msg.Attachments.Count == 4
+            && msg.Attachments.All(att => att.ContentType?.StartsWith("image/") == true);
+    }
+
+    private async Task<bool> UserHasRecentMessageInGuild(SocketGuild guild, ulong userId, DateTimeOffset cutoff, ulong excludeMessageId)
+    {
+        foreach (var textChannel in guild.TextChannels)
+        {
+            ulong beforeMessageId = 0;
+            for (int page = 0; page < 20; page++)
+            {
+                List<IMessage> batch;
+                try
+                {
+                    batch = beforeMessageId == 0
+                    ? (await textChannel.GetMessagesAsync(limit: 100).FlattenAsync()).ToList()
+                    : (await textChannel.GetMessagesAsync(beforeMessageId, Direction.Before, 100).FlattenAsync()).ToList();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "Skipping channel {channelId} while scanning recent history for user {userId}", textChannel.Id, userId);
+                    break;
+                }
+
+                if (batch.Count == 0)
+                    break;
+
+                if (batch.Any(m => m.Author.Id == userId && m.Id != excludeMessageId && m.Timestamp >= cutoff))
+                    return true;
+
+                var oldestTimestamp = batch.Min(m => m.Timestamp);
+                if (oldestTimestamp < cutoff)
+                    break;
+
+                beforeMessageId = batch.Min(m => m.Id);
+            }
+        }
+
+        return false;
     }
 
     private async Task HandleInGameChat(SocketMessage msg)
