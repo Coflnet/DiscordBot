@@ -128,9 +128,15 @@ public class GitRepoAutocompleteHandler : AutocompleteHandler
     public override async Task<AutocompletionResult> GenerateSuggestionsAsync(IInteractionContext context, IAutocompleteInteraction autocompleteInteraction, IParameterInfo parameter, IServiceProvider services)
     {
         var github = services.GetRequiredService<GitHubClient>();
-        var repos = await github.Search.SearchRepo(new SearchRepositoriesRequest("Coflnet/" + autocompleteInteraction.Data.Current.Value.ToString()));
+        var searchTerm = autocompleteInteraction.Data.Current.Value?.ToString() ?? string.Empty;
+        var repos = await github.Search.SearchRepo(new SearchRepositoriesRequest(searchTerm)
+        {
+            // Restrict autocomplete to repos owned by the Coflnet org.
+            User = "Coflnet",
+            In = new[] { InQualifier.Name }
+        });
         // Create a collection with suggestions for autocomplete
-        IEnumerable<AutocompleteResult> results = repos.Items.Where(i => i.FullName.Contains("Coflnet")).Select(i =>
+        IEnumerable<AutocompleteResult> results = repos.Items.Select(i =>
         {
             Console.WriteLine(i.Name + " " + i.FullName);
             return new AutocompleteResult(i.Name, i.Name);
