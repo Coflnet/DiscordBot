@@ -20,6 +20,9 @@ public class DiscordHandler : BackgroundService
     private readonly ILogger<DiscordHandler> logger;
     private readonly IConfiguration _config;
     private DiscordSocketClient? client;
+    private InteractionService? interactionService;
+    private readonly SemaphoreSlim interactionInitializationLock = new(1, 1);
+    private bool interactionServiceInitialized;
     private IServiceProvider _serviceProvider;
     private ChatService chatService;
     private HashSet<string> ChatWebhooks = new();
@@ -55,24 +58,15 @@ public class DiscordHandler : BackgroundService
             GatewayIntents = GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent,
             AlwaysDownloadUsers = true
         });
+        interactionService = new InteractionService(client.Rest);
+        interactionService.Log += Log;
+        client.Ready += Init;
+        client.MessageReceived += OnMessageReceived;
+        client.InteractionCreated += OnInteractionCreated;
+        client.JoinedGuild += OnJoinedGuild;
         await client!.LoginAsync(TokenType.Bot, _config["BotToken"]);
         // set intent to receive message
         await client.StartAsync();
-        client!.Ready += Init;
-
-
-        client.MessageReceived += async (msg) =>
-        {
-            try
-            {
-                if (msg.Author.IsBot) return;
-                await OnMessage(msg);
-            }
-            catch (System.Exception e)
-            {
-                logger.LogError(e, "Error handling message");
-            }
-        };
         var sub = await chatService.Subscribe(OnMcChatMessage);
         logger.LogInformation("Discord bot started");
 
@@ -173,11 +167,9 @@ public class DiscordHandler : BackgroundService
     {
         try
         {
+            await EnsureInteractionServiceInitialized();
             var guildId = ulong.Parse(_config["GUILD_ID"] ?? throw new Exception("Guild ID not set"));
             var guild = client!.GetGuild(guildId);
-            var _interactionService = new InteractionService(client.Rest);
-            await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(), _serviceProvider);
-            await _interactionService.RegisterCommandsGloballyAsync(true);
             if (guild == null)
             {
                 logger.LogError("Guild not found");
@@ -188,11 +180,15 @@ public class DiscordHandler : BackgroundService
                 if (c.Name == "in-game-chat")
                 {
                     // list webhooks
-                    var channel = await client.GetChannelAsync(c.Id);
-                    var webhooks = await (channel as ITextChannel).GetWebhooksAsync();
+                    if (await client.GetChannelAsync(c.Id) is not ITextChannel channel)
+                    {
+                        continue;
+                    }
+
+                    var webhooks = await channel.GetWebhooksAsync();
                     if (webhooks.Count == 0)
                     {
-                        var webhook = await (channel as ITextChannel).CreateWebhookAsync("Minecraft Chat");
+                        var webhook = await channel.CreateWebhookAsync("Minecraft Chat");
                         ChatWebhooks.Add($"https://discord.com/api/webhooks/{webhook.Id}/{webhook.Token}");
                     }
                     else
@@ -203,36 +199,14 @@ public class DiscordHandler : BackgroundService
                 }
             }
 
-            _interactionService.Log += Log;
-
             await client.SetActivityAsync(new Game("being developed ...", ActivityType.Watching, ActivityProperties.Embedded, "at hyperspeed"));
-
-            client.InteractionCreated += async interaction =>
-            {
-                var scope = _serviceProvider.CreateScope();
-                var ctx = new SocketInteractionContext(client, interaction);
-                await _interactionService.ExecuteCommandAsync(ctx, scope.ServiceProvider);
-            };
-
-            client.JoinedGuild += async (guild) =>
-            {
-                try
-                {
-                    logger.LogInformation("Joined new guild: {guildName} ({guildId})", guild.Name, guild.Id);
-                    await SetupGuildIntegration(guild, _interactionService);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Error handling guild join for guild {guildId}", guild.Id);
-                }
-            };
 
             foreach (var item in client.Guilds)
             {
                 try
                 {
                     logger.LogInformation("Setting up guild integration for guild {guildName} ({guildId})", item.Name, item.Id);
-                    await SetupGuildIntegration(item, _interactionService);
+                    await SetupGuildIntegration(item);
                 }
                 catch (Exception ex)
                 {
@@ -249,9 +223,84 @@ public class DiscordHandler : BackgroundService
         logger.LogInformation("Discord bot ready");
     }
 
-    private async Task SetupGuildIntegration(SocketGuild guild, InteractionService _interactionService)
+    private async Task EnsureInteractionServiceInitialized()
     {
-        await _interactionService.RemoveModulesFromGuildAsync(guild.Id, _interactionService.Modules.ToArray());
+        if (interactionServiceInitialized)
+        {
+            return;
+        }
+
+        await interactionInitializationLock.WaitAsync();
+        try
+        {
+            if (interactionServiceInitialized)
+            {
+                return;
+            }
+
+            if (interactionService == null)
+            {
+                throw new InvalidOperationException("Interaction service not initialized");
+            }
+
+            await interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(), _serviceProvider);
+            await interactionService.RegisterCommandsGloballyAsync(true);
+            interactionServiceInitialized = true;
+        }
+        finally
+        {
+            interactionInitializationLock.Release();
+        }
+    }
+
+    private async Task OnMessageReceived(SocketMessage msg)
+    {
+        try
+        {
+            if (msg.Author.IsBot) return;
+            await OnMessage(msg);
+        }
+        catch (System.Exception e)
+        {
+            logger.LogError(e, "Error handling message");
+        }
+    }
+
+    private async Task OnInteractionCreated(SocketInteraction interaction)
+    {
+        await EnsureInteractionServiceInitialized();
+        if (interactionService == null || client == null)
+        {
+            return;
+        }
+
+        var scope = _serviceProvider.CreateScope();
+        var ctx = new SocketInteractionContext(client, interaction);
+        await interactionService.ExecuteCommandAsync(ctx, scope.ServiceProvider);
+    }
+
+    private async Task OnJoinedGuild(SocketGuild guild)
+    {
+        try
+        {
+            await EnsureInteractionServiceInitialized();
+            logger.LogInformation("Joined new guild: {guildName} ({guildId})", guild.Name, guild.Id);
+            await SetupGuildIntegration(guild);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error handling guild join for guild {guildId}", guild.Id);
+        }
+    }
+
+    private async Task SetupGuildIntegration(SocketGuild guild)
+    {
+        if (interactionService == null)
+        {
+            return;
+        }
+
+        await interactionService.RemoveModulesFromGuildAsync(guild.Id, interactionService.Modules.ToArray());
 
         // Find or create in-game-chat webhook for the new server
         var chatChannel = guild.Channels.FirstOrDefault(c => c.Name == "in-game-chat") as ITextChannel;
