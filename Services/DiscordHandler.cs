@@ -339,20 +339,22 @@ public class DiscordHandler : BackgroundService
             && IsBroWithFourImages(msg))
         {
             var hasMessageInLast24Hours = await UserHasRecentMessageInGuild(guild, msg.Author.Id, DateTimeOffset.UtcNow.AddHours(-24), msg.Id);
+            logger.LogWarning("Detected likely compromised account pattern from user {userId} ({userName}): 'bro' with 4 images. Has recent activity: {hasRecent}",
+                msg.Author.Id, msg.Author.Username, hasMessageInLast24Hours);
+
+            // Always delete the message regardless of recent history
+            try
+            {
+                await msg.DeleteAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to delete suspicious compromised-account message {messageId}", msg.Id);
+            }
+
+            // Only kick and DM if the user had no prior activity (avoids false positives)
             if (!hasMessageInLast24Hours)
             {
-                logger.LogWarning("Detected likely compromised account pattern from user {userId} ({userName}): 'bro' with 4 images and no activity in the last 24 hours.",
-                    msg.Author.Id, msg.Author.Username);
-
-                try
-                {
-                    await msg.DeleteAsync();
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to delete suspicious compromised-account message {messageId}", msg.Id);
-                }
-
                 try
                 {
                     await msg.Author.SendMessageAsync(
@@ -373,9 +375,9 @@ public class DiscordHandler : BackgroundService
                 {
                     logger.LogError(ex, "Failed to kick likely compromised user {userId}", msg.Author.Id);
                 }
-
-                return;
             }
+
+            return;
         }
         
         // Check for suspicious hacked account messages: empty content + 4 image attachments
@@ -458,11 +460,22 @@ public class DiscordHandler : BackgroundService
         }
     }
 
+    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+        { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff" };
+
+    private static bool IsImageAttachment(IAttachment att)
+    {
+        if (att.ContentType?.StartsWith("image/") == true)
+            return true;
+        var ext = Path.GetExtension(att.Filename);
+        return !string.IsNullOrEmpty(ext) && ImageExtensions.Contains(ext);
+    }
+
     private static bool IsBroWithFourImages(SocketMessage msg)
     {
         return string.Equals(msg.Content.Trim(), "bro", StringComparison.OrdinalIgnoreCase)
             && msg.Attachments.Count == 4
-            && msg.Attachments.All(att => att.ContentType?.StartsWith("image/") == true);
+            && msg.Attachments.All(IsImageAttachment);
     }
 
     private async Task<bool> UserHasRecentMessageInGuild(SocketGuild guild, ulong userId, DateTimeOffset cutoff, ulong excludeMessageId)
