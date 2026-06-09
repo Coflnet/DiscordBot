@@ -2,6 +2,7 @@
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -28,6 +29,7 @@ public class DiscordHandler : BackgroundService
     private HashSet<string> ChatWebhooks = new();
     private Persistence persistence;
     private UserInfoUpdater userInfoUpdater;
+    private FaqService faqService;
     private Dictionary<string, string[]> QuickResponses = new(){
         {"!new-user", ["## (Quick tutorial for MORE flips)",
         "1. Use /cofl setgui cofl (Makes it so you don't have to move your mouse while buying)",
@@ -41,7 +43,22 @@ public class DiscordHandler : BackgroundService
         } }
     };
 
-    public DiscordHandler(ILogger<DiscordHandler> logger, IConfiguration config, IServiceProvider serviceProvider, ChatService chatService, Persistence persistence, UserInfoUpdater userInfoUpdater)
+    // Nitro scam link regex (ported from Node.js bot)
+    private static readonly Regex NitroRegex = new(
+        @"((.*http.*)(.*nitro.*))|((.*nitro.*)(.*http.*))|((.*http.*)(.*gift.*))|((.*gift.*)(.*http.*))",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // One-word spam tracking per user (ported from Node.js bot)
+    private readonly ConcurrentDictionary<ulong, DateTime> _oneWordMessageTimes = new();
+
+    // Exempt roles that bypass one-word spam detection
+    private static readonly string[] ExemptRoles = { "669258959495888907", "869942341442600990", "933807456151285770", "893869139129692190", "941738849808298045" };
+
+    // Channel IDs for auto-thread creation (configurable via appsettings)
+    private ulong _supportChannelId;
+    private ulong _bugReportChannelId;
+
+    public DiscordHandler(ILogger<DiscordHandler> logger, IConfiguration config, IServiceProvider serviceProvider, ChatService chatService, Persistence persistence, UserInfoUpdater userInfoUpdater, FaqService faqService)
     {
         this.logger = logger;
         _config = config;
@@ -49,6 +66,15 @@ public class DiscordHandler : BackgroundService
         this.chatService = chatService;
         this.persistence = persistence;
         this.userInfoUpdater = userInfoUpdater;
+        this.faqService = faqService;
+
+        // Load auto-thread channel IDs from config
+        _supportChannelId = config.GetValue<ulong>("CHANNEL_ID_SUPPORT");
+        _bugReportChannelId = config.GetValue<ulong>("CHANNEL_ID_BUGREPORT");
+
+        // Load FAQ data
+        var faqPath = config["FAQ_PATH"] ?? "Configuration/faq.json";
+        faqService.Load(Path.Combine(AppContext.BaseDirectory, faqPath));
     }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -418,6 +444,18 @@ public class DiscordHandler : BackgroundService
             }
         }
         
+        // #6: Nitro scam link detection (ported from Node.js bot)
+        if (NitroRegex.IsMatch(msg.Content))
+        {
+            logger.LogInformation("Deleted nitro scam link from {userId}: {content}", msg.Author.Id, msg.Content);
+            await msg.DeleteAsync();
+            return;
+        }
+
+        // #11: One-word message spam detection (ported from Node.js bot)
+        if (CheckOneWordSpam(msg))
+            return;
+
         await persistence.SaveDiscordMessage(MessageController.MapMessage(msg, mentionsToName));
         if (msg.Content.Contains("steamcommunity.com"))
         {
@@ -447,6 +485,10 @@ public class DiscordHandler : BackgroundService
             return;
         }
 
+        // #8: Auto-thread creation for support, bug report, and suggestions channels (ported from Node.js bot)
+        if (CheckAutoThreadCreation(msg))
+            return;
+
         if (channelName == "in-game-chat")
         {
             await HandleInGameChat(msg);
@@ -457,6 +499,14 @@ public class DiscordHandler : BackgroundService
             var responses = QuickResponses[msg.Content];
             await msg.Channel.SendMessageAsync(string.Join("\n", responses), messageReference: msg.Reference);
             await msg.DeleteAsync(new() { AuditLogReason = "Quick response" });
+            return;
+        }
+
+        // #7: FAQ auto-reply (ported from Node.js bot answer.json)
+        var faqAnswer = faqService.GetResponse(msg.Content);
+        if (faqAnswer != null)
+        {
+            await msg.Channel.SendMessageAsync(faqAnswer, messageReference: msg.Reference);
         }
     }
 
@@ -476,6 +526,134 @@ public class DiscordHandler : BackgroundService
         return string.Equals(msg.Content.Trim(), "bro", StringComparison.OrdinalIgnoreCase)
             && msg.Attachments.Count == 4
             && msg.Attachments.All(IsImageAttachment);
+    }
+
+    // #11: One-word spam detection (ported from Node.js bot)
+    private bool CheckOneWordSpam(SocketMessage msg)
+    {
+        // Only check messages that are in a guild (have member attribute)
+        var guildUser = msg.Author as SocketGuildUser;
+        if (guildUser == null)
+            return false;
+
+        var words = msg.Content.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length != 1 || words[0].Length == 0)
+            return false;
+
+        // Allow URLs through
+        if (IsValidHttpUrl(words[0]))
+            return false;
+
+        // Check if user has an exempt role
+        foreach (var role in guildUser.Roles)
+        {
+            if (ExemptRoles.Contains(role.Id.ToString()))
+                return false;
+        }
+
+        // Check if this user sent a one-word message within the last 10 seconds
+        var now = DateTime.UtcNow;
+        if (_oneWordMessageTimes.TryGetValue(msg.Author.Id, out var lastTime)
+            && (now - lastTime).TotalMilliseconds < 10000)
+        {
+            // Delete and warn
+            _ = Task.Run(async () =>
+            {
+                await msg.DeleteAsync();
+                try
+                {
+                    await msg.Author.SendMessageAsync(
+                        "Your message was deleted due to one word message spamming. Please do not send 1 word messages");
+                }
+                catch
+                {
+                    var sentMessage = await msg.Channel.SendMessageAsync(
+                        $"<@{msg.Author.Id}>, your message was deleted due to one word message spamming. Please do not send 1 word messages");
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(5000);
+                        await sentMessage.DeleteAsync();
+                    });
+                }
+            });
+            return true;
+        }
+
+        _oneWordMessageTimes[msg.Author.Id] = now;
+        return false;
+    }
+
+    private static bool IsValidHttpUrl(string text)
+    {
+        return Uri.TryCreate(text, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    }
+
+    // #8: Auto-thread creation for support, bug report, and suggestions channels (ported from Node.js bot)
+    private bool CheckAutoThreadCreation(SocketMessage msg)
+    {
+        var channelId = msg.Channel.Id;
+
+        if (channelId == _supportChannelId)
+        {
+            CreateAnswerThread(msg, "Support Help", "Needed a separate thread for moderation", thread =>
+            {
+                SendFaqAnswer(thread, msg.Content);
+                thread.SendMessageAsync("Please provide as much information as possible so its easier to help you.\nA new support ticket was made <@&1057620211005661204>");
+            });
+            return true;
+        }
+
+        if (channelId == _bugReportChannelId)
+        {
+            CreateAnswerThread(msg, $" {msg.Author.Username} Bug Help", "help with bug", thread =>
+            {
+                thread.SendMessageAsync("Thank you for making a ticket\nPlease state the below\n- What you did\n- What you intended to do\n- what happened (even better if you take a screenshot/video of it)\n- What you expected");
+                SendFaqAnswer(thread, msg.Content);
+
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(15000);
+                    await thread.SendMessageAsync("If you use the mod please also use `/cofl report (optional message)` to easily create a report and copy the id you get into this thread");
+                    await Task.Delay(25000);
+                    await thread.SendMessageAsync("Try to be as precise and complete as possible. (Its faster to read some duplicate text than to ask you something)");
+                });
+            });
+            return true;
+        }
+
+        return false;
+    }
+
+    private void CreateAnswerThread(SocketMessage msg, string name, string _reason, Action<IThreadChannel> callback)
+    {
+        if (msg.Channel is not ITextChannel textChannel)
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var thread = await textChannel.CreateThreadAsync(
+                    name,
+                    autoArchiveDuration: ThreadArchiveDuration.OneWeek,
+                    message: msg);
+                callback(thread);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to create auto-thread for message {messageId}", msg.Id);
+            }
+        });
+    }
+
+    private void SendFaqAnswer(IThreadChannel thread, string text)
+    {
+        var answer = faqService.GetResponse(text);
+        if (answer != null)
+        {
+            _ = thread.SendMessageAsync(answer);
+        }
     }
 
     private async Task<bool> UserHasRecentMessageInGuild(SocketGuild guild, ulong userId, DateTimeOffset cutoff, ulong excludeMessageId)

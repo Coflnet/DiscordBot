@@ -1,0 +1,92 @@
+[
+  {
+    "question": ["price", "paid"],
+    "blacklist": ["much", "you", "my", "ingame", "nice", "thought", "sell", "called", "ct"],
+    "answer": ":point_right: In-game just do /cofl lore and click 'PRICE_PAID'"
+  },
+  {
+    "question": ["how", "mod", "download"],
+    "blacklist": ["just", "dont", "my", "folder", "today", "i", "downloaded"],
+    "answer": ":point_right: You can download the mod in the channel labeled <#890682907889373257>"
+  },
+  {
+    "question": ["how", "buy", "premium"],
+    "blacklist": ["me", "worth"],
+    "answer": ":point_right: https://sky.coflnet.com/premium"
+  },
+  {
+    "question": ["get", "buy", "premium"],
+    "blacklist": ["you", "me", "worth"],
+    "answer": ":point_right: https://sky.coflnet.com/premium"
+  },
+  {
+    "question": ["mod", "virus"],
+    "blacklist": ["doesnt", "which", "if", "isnt"],
+    "answer": ":point_right: The mod has no harmful intentions. You can check the code yourself on github: https://github.com/Coflnet/SkyblockMod"
+  },
+  {
+    "question": ["doesnt", "make", "money"],
+    "blacklist": ["that", "which", "nec", "working", "farming", "slayers", "revs", "eman", "enchanting", "tfm", "grinding", "new", "bz", "method"],
+    "answer": ":point_right: It uses similar auctions to calculate the median price. Depending on the sell volume of an item some flips may indeed take a while to sell"
+  },
+  {
+    "question": ["mod", "free"],
+    "blacklist": ["nec", "not enough coins", "that"],
+    "answer": ":point_right: The mod is free to download in <#890682907889373257> its the same mod for both free and paid plans"
+  },
+  {
+    "question": ["should", "buy", "premium"],
+    "blacklist": ["you", "just", "probly", "probably"],
+    "answer": ":point_right: Only buy if you like the benefits listed on https://sky.coflnet.com/premium"
+  },
+  {
+    "question": ["mod", "bannable"],
+    "blacklist": ["doesnt", "which", "if", "isnt"],
+    "answer": ":point_right: The mod has no harmful intentions. You can check the code yourself on github: https://github.com/Coflnet/SkyblockMod"
+  },
+  {
+    "question": ["what", "ferrum"],
+    "blacklist": ["owner", "endorphin", "autobuy", "isnt", "public", "tfm"],
+    "answer": "It is a private flipper Made by <@415201450336059392>"
+  },
+  {
+    "question": ["what", "tfm"],
+    "blacklist": ["where", "buy", "if"],
+    "answer": ":point_right: An ah flipper/sniper, this is its discord https://discord.gg/qfm5Drase2"
+  },
+  {
+    "question": ["is", "cofl", "rat"],
+    "blacklist": ["doesnt", "which", "if", "isnt", "isn't", "ratio"],
+    "answer": "No, Cofl is not ratted, you are welcome to decompile the mod from <#890682907889373257> and see for yourself."
+  },
+  {
+    "question": ["is", "cofl", "ratted"],
+    "blacklist": ["doesnt", "which", "if", "isnt", "isn't", "ratio"],
+    "answer": "No, Cofl is not ratted, you are welcome to decompile the mod from <#890682907889373257> and see for yourself. Or use https://isthisarat.com"
+  },
+  {
+    "question": ["is", "this", "ratted"],
+    "blacklist": ["doesnt", "which", "if", "isnt", "isn't", "ratio"],
+    "answer": "No, Cofl is not ratted, you are welcome to decompile the mod from <#890682907889373257> and see for yourself."
+  },
+  {
+    "question": ["is", "cofl", "virus"],
+    "blacklist": ["doesnt", "which", "if", "isnt", "isn't", "ratio"],
+    "answer": "No, Cofl is not a virus, you are welcome to decompile the mod from <#890682907889373257> and see for yourself."
+  },
+  {
+    "question": ["can", "i", "have", "flipper role"],
+    "blacklist": ["you"],
+    "answer": "Theres 2 things you have to make sure you have done\n1. Make sure your verified on Coflnet (search your name at in the search bar at the top of the website <https://sky.coflnet.com> and then if you are not verified click 'You? Claim account.')\n2. Make sure your discord account is linked to your hypixel account https://youtu.be/Gw1F7cYt_aQ?t=11"
+  },
+  {
+    "question": ["can", "have", "server role"],
+    "blacklist": ["dont", "get"],
+    "answer": "If you want the flipper role please dm staff with proof/your email and they will give you the role."
+  },
+  {
+    "question": ["can", "i", "get", "flipper role"],
+    "blacklist": ["you"],
+    "answer": "Theres 2 things you have to make sure you have done\n1. Make sure your verified on Coflnet (search your name at in the search bar at the top of the website <https://sky.coflnet.com/> and then if you are not verified click 'You? Claim account.')\n2. Make sure your discord account is linked to your hypixel account https://youtu.be/Gw1F7cYt_aQ?t=11"
+  }
+]

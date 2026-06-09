@@ -27,6 +27,7 @@ builder.Services.AddSingleton<Coflnet.Sky.Settings.Client.Api.ISettingsApi, Cofl
 builder.Services.AddSingleton<ChatService>();
 builder.Services.AddSingleton<LokiQuery>();
 builder.Services.AddSingleton<Persistence>();
+builder.Services.AddSingleton<FaqService>();
 builder.Host.ConfigureApi((context, s, options) =>
 {
     options.AddApiHttpClients(c =>
