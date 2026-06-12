@@ -531,9 +531,9 @@ public class DiscordHandler : BackgroundService
     // #11: One-word spam detection (ported from Node.js bot)
     private bool CheckOneWordSpam(SocketMessage msg)
     {
-        // Only check messages that are in a guild (have member attribute)
+        // Only moderate one-word spam on this specific guild
         var guildUser = msg.Author as SocketGuildUser;
-        if (guildUser == null)
+        if (guildUser == null || guildUser.Guild.Id != 267680588666896385)
             return false;
 
         var words = msg.Content.Split(' ', StringSplitOptions.RemoveEmptyEntries);
