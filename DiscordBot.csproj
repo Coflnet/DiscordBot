@@ -11,7 +11,7 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);Client\**\*</DefaultItemExcludes>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Coflnet.Core" Version="0.5.1" />
+    <PackageReference Include="Coflnet.Core" Version="0.7.3" />
     <PackageReference Include="Coflnet.Payments.Client" Version="0.16.1" />
     <PackageReference Include="Coflnet.Sky.Api.Client" Version="0.7.2" />
     <PackageReference Include="Coflnet.Sky.Chat.Client" Version="1.0.1" />

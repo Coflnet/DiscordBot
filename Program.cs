@@ -8,8 +8,11 @@ using Octokit;
 using StackExchange.Redis;
 using Coflnet.Sky.ModCommands.Client.Extensions;
 using Coflnet.Sky.ModCommands.Client.Client;
+using Coflnet.Security.OpenBao;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Configuration.AddOpenBaoFromEnvironment();
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
