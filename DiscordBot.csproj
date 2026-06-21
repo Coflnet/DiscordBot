@@ -12,19 +12,19 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Coflnet.Core" Version="0.7.3" />
-    <PackageReference Include="Coflnet.Payments.Client" Version="0.16.1" />
-    <PackageReference Include="Coflnet.Sky.Api.Client" Version="0.7.2" />
+    <PackageReference Include="Coflnet.Payments.Client" Version="0.22.0" />
+    <PackageReference Include="Coflnet.Sky.Api.Client" Version="0.7.6" />
     <PackageReference Include="Coflnet.Sky.Chat.Client" Version="1.0.1" />
     <PackageReference Include="Coflnet.Sky.McConnect" Version="0.5.0" />
-    <PackageReference Include="Coflnet.Sky.ModCommands.Client" Version="0.10.0" />
-    <PackageReference Include="Coflnet.Sky.PlayerName.Client" Version="0.2.3" />
+    <PackageReference Include="Coflnet.Sky.ModCommands.Client" Version="0.10.1" />
+    <PackageReference Include="Coflnet.Sky.PlayerName.Client" Version="0.2.4" />
     <PackageReference Include="Coflnet.Sky.Settings.Client" Version="0.2.3" />
-    <PackageReference Include="Discord.Net" Version="3.18.0" />
+    <PackageReference Include="Discord.Net" Version="3.20.1" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.*" />
     <PackageReference Include="Octokit" Version="14.0.0" />
     <PackageReference Include="Octokit.GraphQL" Version="0.4.0-beta" />
-    <PackageReference Include="StackExchange.Redis" Version="2.9.32" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="8.1.4" />
+    <PackageReference Include="StackExchange.Redis" Version="3.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.2" />
   </ItemGroup>
 
   <ItemGroup>

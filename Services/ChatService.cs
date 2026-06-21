@@ -136,6 +136,7 @@ public class ChatService
         public string Message;
         [Key(3)]
         public string SenderUuid;
+        [Key(4)]
         public AccountTier AccountTier;
     }
 }
