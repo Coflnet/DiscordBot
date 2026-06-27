@@ -94,7 +94,8 @@ public class DiscordHandler : BackgroundService
         // set intent to receive message
         await client.StartAsync();
         var sub = await chatService.Subscribe(OnMcChatMessage);
-        logger.LogInformation("Discord bot started");
+        logger.LogInformation("Discord bot started, logged in as {username}#{discriminator} (id {botId})",
+            client.CurrentUser?.Username, client.CurrentUser?.Discriminator, client.CurrentUser?.Id);
 
         await Task.Delay(-1, stoppingToken);
         sub.Unsubscribe();
@@ -193,6 +194,8 @@ public class DiscordHandler : BackgroundService
     {
         try
         {
+            logger.LogInformation("Discord client ready, authenticated as {username}#{discriminator} (id {botId})",
+                client!.CurrentUser?.Username, client.CurrentUser?.Discriminator, client.CurrentUser?.Id);
             await EnsureInteractionServiceInitialized();
             var guildId = ulong.Parse(_config["GUILD_ID"] ?? throw new Exception("Guild ID not set"));
             var guild = client!.GetGuild(guildId);
