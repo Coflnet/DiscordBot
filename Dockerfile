@@ -6,7 +6,11 @@ COPY . .
 RUN dotnet test
 RUN dotnet publish -c release -o /app
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled
+# -extra includes ICU + tzdata. Without it (plain -chiseled) .NET runs in
+# globalization-invariant mode, and Discord.Net throws CultureNotFoundException
+# while handling GUILD_AVAILABLE, so guild channels are never cached and inbound
+# (Discord->Minecraft) message forwarding silently breaks.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra
 WORKDIR /app
 
 COPY --from=build /app .

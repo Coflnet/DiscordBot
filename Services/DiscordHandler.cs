@@ -367,13 +367,6 @@ public class DiscordHandler : BackgroundService
             LogSeverity.Debug => LogLevel.Trace,
             _ => LogLevel.Information
         };
-        // Discord.Net emits a Gateway warning for every event in a channel/thread it has not
-        // cached (archived threads, messages during initial guild sync, etc). These are benign
-        // and extremely noisy when present in many guilds, so demote them.
-        if (message.Source == "Gateway" && message.Message?.StartsWith("Unknown Channel") == true)
-        {
-            level = LogLevel.Debug;
-        }
         logger.Log(level, message.Exception, "[Discord:{source}] {message}", message.Source, message.Message);
         return Task.CompletedTask;
     }
