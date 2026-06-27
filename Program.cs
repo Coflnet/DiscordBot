@@ -8,6 +8,7 @@ using Octokit;
 using StackExchange.Redis;
 using Coflnet.Sky.ModCommands.Client.Extensions;
 using Coflnet.Sky.ModCommands.Client.Client;
+using Coflnet.Core.Tracing;
 using Coflnet.Security.OpenBao;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -31,6 +32,7 @@ builder.Services.AddSingleton<ChatService>();
 builder.Services.AddSingleton<LokiQuery>();
 builder.Services.AddSingleton<Persistence>();
 builder.Services.AddSingleton<FaqService>();
+builder.Services.AddTracing(builder.Configuration, 0.001, 60);
 builder.Host.ConfigureApi((context, s, options) =>
 {
     options.AddApiHttpClients(c =>
@@ -62,15 +64,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(s => ConnectionMultiplexer
 
 var app = builder.Build();
 
-app.UseSwagger(a =>
-{
-    a.RouteTemplate = "api/swagger/{documentName}/swagger.json";
-});
-app.UseSwaggerUI(c =>
-{
-    c.SwaggerEndpoint("/api/swagger/v1/swagger.json", "SkyApi v1");
-    c.RoutePrefix = "api";
-});
+app.UseCoflnetCore();
 
 app.UseResponseCaching();
 app.UseHttpsRedirection();
