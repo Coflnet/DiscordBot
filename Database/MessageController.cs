@@ -80,8 +80,6 @@ public class MessageController : ControllerBase
         var stored = (await persistence.GetDiscordMessages(channelId, before)).ToList();
         if (stored.Count > 0)
         {
-            logger.LogInformation($"Refreshing {stored.Count} messages from database for channel '{channelName}' (ID: {channelId}). Validating attachments...");
-
             // Refresh messages older than 24 hours by fetching fresh versions from Discord.
             var now = DateTime.UtcNow;
             var refreshed = new List<DiscordMessage>();
@@ -90,6 +88,7 @@ public class MessageController : ControllerBase
 
             if (toUpdate.Count > 0)
             {
+                logger.LogInformation($"Refreshing {toUpdate.Count} of {stored.Count} stored messages for channel '{channelName}' (ID: {channelId}) from Discord to revalidate attachments...");
                 var getBefore = stored.Max(m => m.MessageId);
                 var loadesMessages = await discordHandler.GetMessagesFromChannel(channelId, getBefore, stored.Count);
                 var mapped = loadesMessages.OfType<RestUserMessage>().Select(m => MapMessages(m));

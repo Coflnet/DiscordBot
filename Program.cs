@@ -32,7 +32,6 @@ builder.Services.AddSingleton<ChatService>();
 builder.Services.AddSingleton<LokiQuery>();
 builder.Services.AddSingleton<Persistence>();
 builder.Services.AddSingleton<FaqService>();
-builder.Services.AddTracing(builder.Configuration, 0.001, 60);
 builder.Host.ConfigureApi((context, s, options) =>
 {
     options.AddApiHttpClients(c =>

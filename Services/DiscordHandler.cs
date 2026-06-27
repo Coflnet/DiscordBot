@@ -86,7 +86,9 @@ public class DiscordHandler : BackgroundService
         });
         interactionService = new InteractionService(client.Rest);
         interactionService.Log += Log;
+        client.Log += Log;
         client.Ready += Init;
+        client.Disconnected += OnDisconnected;
         client.MessageReceived += OnMessageReceived;
         client.InteractionCreated += OnInteractionCreated;
         client.JoinedGuild += OnJoinedGuild;
@@ -94,8 +96,7 @@ public class DiscordHandler : BackgroundService
         // set intent to receive message
         await client.StartAsync();
         var sub = await chatService.Subscribe(OnMcChatMessage);
-        logger.LogInformation("Discord bot started, logged in as {username}#{discriminator} (id {botId})",
-            client.CurrentUser?.Username, client.CurrentUser?.Discriminator, client.CurrentUser?.Id);
+        logger.LogInformation("Discord bot starting, waiting for gateway to become ready (not connected yet)");
 
         await Task.Delay(-1, stoppingToken);
         sub.Unsubscribe();
@@ -245,9 +246,7 @@ public class DiscordHandler : BackgroundService
         }
         catch (Exception exception)
         {
-
-            // You can send this error somewhere or just print it to the console, for this example we're just going to print it.
-            Console.WriteLine(exception);
+            logger.LogError(exception, "Error during Discord ready initialization - bot may not be fully ready");
         }
         logger.LogInformation("Discord bot ready");
     }
@@ -350,9 +349,33 @@ public class DiscordHandler : BackgroundService
         }
     }
 
-    private async Task Log(LogMessage message)
+    private Task Log(LogMessage message)
     {
-        logger.LogInformation(message.ToString());
+        var level = message.Severity switch
+        {
+            LogSeverity.Critical => LogLevel.Critical,
+            LogSeverity.Error => LogLevel.Error,
+            LogSeverity.Warning => LogLevel.Warning,
+            LogSeverity.Info => LogLevel.Information,
+            LogSeverity.Verbose => LogLevel.Debug,
+            LogSeverity.Debug => LogLevel.Trace,
+            _ => LogLevel.Information
+        };
+        logger.Log(level, message.Exception, "[Discord:{source}] {message}", message.Source, message.Message);
+        return Task.CompletedTask;
+    }
+
+    private Task OnDisconnected(Exception ex)
+    {
+        if (ex == null)
+        {
+            logger.LogWarning("Discord gateway disconnected (no exception). Waiting for reconnect...");
+        }
+        else
+        {
+            logger.LogError(ex, "Discord gateway disconnected with an error - this may prevent the bot from becoming ready");
+        }
+        return Task.CompletedTask;
     }
 
     private async Task OnMessage(SocketMessage msg)
