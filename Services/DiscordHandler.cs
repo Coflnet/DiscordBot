@@ -81,8 +81,14 @@ public class DiscordHandler : BackgroundService
         client = new DiscordSocketClient(new DiscordSocketConfig
         {
             LogLevel = LogSeverity.Debug,
-            GatewayIntents = GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent,
-            AlwaysDownloadUsers = true
+            // GuildScheduledEvents is in AllUnprivileged but we don't handle those events
+            // (Discord.Net warns about it), so drop it.
+            GatewayIntents = (GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent) & ~GatewayIntents.GuildScheduledEvents,
+            // AlwaysDownloadUsers triggers a member download across every guild on READY,
+            // which requires the privileged GuildMembers intent (not enabled) so it throws,
+            // and stalls guild availability - causing "Unknown Channel" races on startup.
+            // The code never enumerates the member cache, so keep it off.
+            AlwaysDownloadUsers = false
         });
         interactionService = new InteractionService(client.Rest);
         interactionService.Log += Log;
@@ -361,6 +367,13 @@ public class DiscordHandler : BackgroundService
             LogSeverity.Debug => LogLevel.Trace,
             _ => LogLevel.Information
         };
+        // Discord.Net emits a Gateway warning for every event in a channel/thread it has not
+        // cached (archived threads, messages during initial guild sync, etc). These are benign
+        // and extremely noisy when present in many guilds, so demote them.
+        if (message.Source == "Gateway" && message.Message?.StartsWith("Unknown Channel") == true)
+        {
+            level = LogLevel.Debug;
+        }
         logger.Log(level, message.Exception, "[Discord:{source}] {message}", message.Source, message.Message);
         return Task.CompletedTask;
     }
