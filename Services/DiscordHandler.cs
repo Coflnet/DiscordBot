@@ -51,6 +51,21 @@ public class DiscordHandler : BackgroundService
     // One-word spam tracking per user (ported from Node.js bot)
     private readonly ConcurrentDictionary<ulong, DateTime> _oneWordMessageTimes = new();
 
+    // Multi-channel image spam tracking: recent image posts per user across channels.
+    // A compromised account typically dumps the same scam image into several channels
+    // within a couple of minutes - something a normal user never does.
+    private readonly ConcurrentDictionary<ulong, List<ImagePost>> _recentImagePosts = new();
+
+    // How close together image posts must be to count as one burst.
+    private static readonly TimeSpan MultiChannelImageWindow = TimeSpan.FromMinutes(2);
+
+    // Extra false-positive guard: only auto-kick when the user posted nothing in the
+    // weeks before the burst (throwaway / freshly compromised account pattern).
+    private static readonly TimeSpan PriorActivityWindow = TimeSpan.FromDays(14);
+
+    // A single image post used to correlate a burst across channels.
+    private readonly record struct ImagePost(ulong ChannelId, ulong MessageId, DateTime Time);
+
     // Exempt roles that bypass one-word spam detection
     private static readonly string[] ExemptRoles = { "669258959495888907", "869942341442600990", "933807456151285770", "893869139129692190", "941738849808298045" };
 
@@ -392,6 +407,10 @@ public class DiscordHandler : BackgroundService
         var mentionsToName = msg.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
         Console.WriteLine(msg.Content + " in " + channelName);
 
+        // Detect a compromised account dumping images into multiple channels in fast succession.
+        if (await HandleMultiChannelImageSpam(msg))
+            return;
+
         if ((msg.Channel as SocketGuildChannel)?.Guild is SocketGuild guild
             && msg.Author is SocketGuildUser compromisedGuildUser
             && IsBroWithFourImages(msg))
@@ -560,6 +579,125 @@ public class DiscordHandler : BackgroundService
             && msg.Attachments.All(IsImageAttachment);
     }
 
+    /// <summary>
+    /// Detects and mitigates the "compromised account" pattern where a user uploads image
+    /// posts into multiple channels within a short window. Since the image is re-uploaded
+    /// per channel the attachment URLs differ, so detection relies purely on the same user
+    /// posting images in 2+ distinct channels in fast succession. Auto-kick is additionally
+    /// gated on the user having no message history in the weeks prior, to avoid false
+    /// positives on genuinely active members.
+    /// </summary>
+    /// <returns>true if the message was handled (and processing should stop).</returns>
+    private async Task<bool> HandleMultiChannelImageSpam(SocketMessage msg)
+    {
+        if (msg.Channel is not SocketGuildChannel guildChannel
+            || msg.Author is not SocketGuildUser guildUser)
+            return false;
+
+        var burst = TrackMultiChannelImagePosts(msg);
+        if (burst == null)
+            return false; // no image, or not yet spread across multiple channels
+
+        var guild = guildChannel.Guild;
+        var burstStart = burst.Min(p => p.Time);
+        var burstIds = burst.Select(p => p.MessageId).ToHashSet();
+        var channelCount = burst.Select(p => p.ChannelId).Distinct().Count();
+
+        // Stop tracking immediately so a late straggler from the same burst doesn't
+        // re-trigger the whole flow (double kick / DM).
+        _recentImagePosts.TryRemove(msg.Author.Id, out _);
+
+        // Check for any activity in the weeks before the burst started. Bounding the scan
+        // by burstStart means the burst messages themselves don't count as "prior activity".
+        bool hasPriorActivity;
+        try
+        {
+            hasPriorActivity = await UserHasMessageInWindow(
+                guild, msg.Author.Id,
+                DateTimeOffset.UtcNow - PriorActivityWindow,
+                burstStart,
+                burstIds);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to check prior activity for user {userId}; treating as none", msg.Author.Id);
+            hasPriorActivity = false;
+        }
+
+        logger.LogWarning("Detected multi-channel image spam from user {userId} ({userName}): images in {channelCount} channels within {window}. Has prior activity: {hasPrior}",
+            msg.Author.Id, msg.Author.Username, channelCount, MultiChannelImageWindow, hasPriorActivity);
+
+        // Always remove the offending messages across every channel of the burst.
+        foreach (var post in burst)
+            await TryDeleteMessage(post.ChannelId, post.MessageId);
+
+        // Only kick when there's no prior history (compromised/throwaway account).
+        if (!hasPriorActivity)
+        {
+            try
+            {
+                await msg.Author.SendMessageAsync(
+                    "Your account appears to have been compromised. We removed image spam posted across several channels and kicked you for safety. " +
+                    "Please secure your account. You can rejoin any time using the invite at https://sky.coflnet.com");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Could not send multi-channel image spam DM to user {userId}", msg.Author.Id);
+            }
+
+            try
+            {
+                await guildUser.KickAsync($"Likely compromised account: image spam across {channelCount} channels + no prior message activity");
+                logger.LogInformation("Kicked user {userId} for multi-channel image spam", msg.Author.Id);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to kick user {userId} for multi-channel image spam", msg.Author.Id);
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Records this message as an image post for its author and returns the current burst
+    /// (all image posts within <see cref="MultiChannelImageWindow"/>) when it spans 2+
+    /// distinct channels, otherwise null.
+    /// </summary>
+    private List<ImagePost>? TrackMultiChannelImagePosts(SocketMessage msg)
+    {
+        if (msg.Attachments.Count == 0 || !msg.Attachments.Any(IsImageAttachment))
+            return null;
+
+        var now = DateTime.UtcNow;
+        var post = new ImagePost(msg.Channel.Id, msg.Id, now);
+        var list = _recentImagePosts.GetOrAdd(msg.Author.Id, _ => new List<ImagePost>());
+
+        List<ImagePost> snapshot;
+        lock (list)
+        {
+            list.RemoveAll(p => now - p.Time > MultiChannelImageWindow);
+            list.Add(post);
+            snapshot = list.ToList();
+        }
+
+        var distinctChannels = snapshot.Select(p => p.ChannelId).Distinct().Count();
+        return distinctChannels >= 2 ? snapshot : null;
+    }
+
+    private async Task TryDeleteMessage(ulong channelId, ulong messageId)
+    {
+        try
+        {
+            if (await client!.GetChannelAsync(channelId) is IMessageChannel channel)
+                await channel.DeleteMessageAsync(messageId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to delete message {messageId} in channel {channelId}", messageId, channelId);
+        }
+    }
+
     // #11: One-word spam detection (ported from Node.js bot)
     private bool CheckOneWordSpam(SocketMessage msg)
     {
@@ -686,6 +824,50 @@ public class DiscordHandler : BackgroundService
         {
             _ = thread.SendMessageAsync(answer);
         }
+    }
+
+    /// <summary>
+    /// Scans recent channel history for any message from <paramref name="userId"/> with a
+    /// timestamp in [after, before), ignoring the given message ids. Used to tell a freshly
+    /// compromised account (no prior history) apart from an active member.
+    /// </summary>
+    private async Task<bool> UserHasMessageInWindow(SocketGuild guild, ulong userId, DateTimeOffset after, DateTimeOffset before, ISet<ulong> excludeMessageIds)
+    {
+        foreach (var textChannel in guild.TextChannels)
+        {
+            ulong beforeMessageId = 0;
+            for (int page = 0; page < 20; page++)
+            {
+                List<IMessage> batch;
+                try
+                {
+                    batch = beforeMessageId == 0
+                        ? (await textChannel.GetMessagesAsync(limit: 100).FlattenAsync()).ToList()
+                        : (await textChannel.GetMessagesAsync(beforeMessageId, Direction.Before, 100).FlattenAsync()).ToList();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "Skipping channel {channelId} while scanning history for user {userId}", textChannel.Id, userId);
+                    break;
+                }
+
+                if (batch.Count == 0)
+                    break;
+
+                if (batch.Any(m => m.Author.Id == userId
+                    && !excludeMessageIds.Contains(m.Id)
+                    && m.Timestamp >= after && m.Timestamp < before))
+                    return true;
+
+                var oldestTimestamp = batch.Min(m => m.Timestamp);
+                if (oldestTimestamp < after)
+                    break;
+
+                beforeMessageId = batch.Min(m => m.Id);
+            }
+        }
+
+        return false;
     }
 
     private async Task<bool> UserHasRecentMessageInGuild(SocketGuild guild, ulong userId, DateTimeOffset cutoff, ulong excludeMessageId)
