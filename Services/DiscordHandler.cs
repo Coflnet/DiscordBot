@@ -64,7 +64,7 @@ public class DiscordHandler : BackgroundService
     private static readonly TimeSpan PriorActivityWindow = TimeSpan.FromDays(14);
 
     // A single image post used to correlate a burst across channels.
-    private readonly record struct ImagePost(ulong ChannelId, ulong MessageId, DateTime Time);
+    private readonly record struct ImagePost(ulong ChannelId, ulong ContextChannelId, ulong MessageId, DateTime Time);
 
     // Exempt roles that bypass one-word spam detection
     private static readonly string[] ExemptRoles = { "669258959495888907", "869942341442600990", "933807456151285770", "893869139129692190", "941738849808298045" };
@@ -601,7 +601,7 @@ public class DiscordHandler : BackgroundService
         var guild = guildChannel.Guild;
         var burstStart = burst.Min(p => p.Time);
         var burstIds = burst.Select(p => p.MessageId).ToHashSet();
-        var channelCount = burst.Select(p => p.ChannelId).Distinct().Count();
+        var channelCount = burst.Select(p => p.ContextChannelId).Distinct().Count();
 
         // Stop tracking immediately so a late straggler from the same burst doesn't
         // re-trigger the whole flow (double kick / DM).
@@ -670,7 +670,12 @@ public class DiscordHandler : BackgroundService
             return null;
 
         var now = DateTime.UtcNow;
-        var post = new ImagePost(msg.Channel.Id, msg.Id, now);
+        // A thread is part of its parent channel for spam detection. In particular,
+        // continuing an auto-created bug report thread is not cross-channel posting.
+        var contextChannelId = msg.Channel is SocketThreadChannel thread
+            ? thread.ParentChannel.Id
+            : msg.Channel.Id;
+        var post = new ImagePost(msg.Channel.Id, contextChannelId, msg.Id, now);
         var list = _recentImagePosts.GetOrAdd(msg.Author.Id, _ => new List<ImagePost>());
 
         List<ImagePost> snapshot;
@@ -681,7 +686,7 @@ public class DiscordHandler : BackgroundService
             snapshot = list.ToList();
         }
 
-        var distinctChannels = snapshot.Select(p => p.ChannelId).Distinct().Count();
+        var distinctChannels = snapshot.Select(p => p.ContextChannelId).Distinct().Count();
         return distinctChannels >= 2 ? snapshot : null;
     }
 
