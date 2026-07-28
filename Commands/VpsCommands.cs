@@ -20,6 +20,7 @@ using RestSharp;
 [Group("vps", "commands for Vps")]
 public partial class VpsCommands : InteractionModuleBase
 {
+    private static readonly Regex MicrosoftLoginLink = new(@"https?://(?:www\.)?microsoft\.com/link\?otc=[A-Za-z0-9]+", RegexOptions.IgnoreCase);
     private readonly ILogger<VpsCommands> logger;
     private readonly IConfiguration configuration;
     private readonly IVpsApi vpsApi;
@@ -252,11 +253,12 @@ public partial class VpsCommands : InteractionModuleBase
             await FollowupAsync("Failed to get instance", ephemeral: true);
             return null;
         }
-        if(string.IsNullOrEmpty(instance.GetValueOrDefault("discordID")))
+        var discordSetting = target.AppKind == "fbaf" ? "discord_id" : "discordID";
+        if(string.IsNullOrEmpty(instance.GetValueOrDefault(discordSetting)))
         {
             await vpsApi.VpsUserInstanceIdSetPostAsync(user.UserId, target.Id!.Value, new(new()
             {
-                Setting = "discordId",
+                Setting = discordSetting,
                 Value = user.DiscordId.ToString()
             }));
         }
@@ -308,6 +310,7 @@ public partial class VpsCommands : InteractionModuleBase
             var price = instance.AppKind switch
             {
                 "tpm+" => 5100,
+                "fbaf" => 2700,
                 _ => 2700
             };
             a.Embed = new EmbedBuilder()
@@ -358,13 +361,13 @@ public partial class VpsCommands : InteractionModuleBase
     public async Task SetIgnsModalOpen(SetIgnsModal modal)
     {
         await DeferAsync(ephemeral: true);
-        (string userId, Guid target) = await GetInstanceId(false);
-        if (target == default)
+        (var profile, var instance) = await GetInstance();
+        if (instance?.Id == null)
             return;
         var igns = modal.IGNs;
-        var result = await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
+        var result = await vpsApi.VpsUserInstanceIdSetPostAsync(profile.UserId, instance.Id.Value, new(new()
         {
-            Setting = "igns",
+            Setting = instance.AppKind == "fbaf" ? "ingame_name" : "igns",
             Value = igns
         }));
         if (!result.IsOk)
@@ -407,6 +410,7 @@ public partial class VpsCommands : InteractionModuleBase
         [Summary("instance-type", "Switch the type of instance you have, will try to migrate settings")]
         [Choice("TPM (normal)", "tpm")]
         [Choice("TPM+", "tpm+")]
+        [Choice("Frikadellen BAF", "fbaf")]
         string? instanceType = null)
     {
         (string userId, Guid target) = await GetInstanceId();
@@ -416,17 +420,28 @@ public partial class VpsCommands : InteractionModuleBase
             await FollowupAsync("You do not have a VPS instance to reset.", ephemeral: true);
             return;
         }
+        var instanceData = await vpsApi.VpsInstancesGetAsync(userId);
+        if (!instanceData.TryOk(out var instances))
+        {
+            logger.LogError("Failed to get instances for user {UserId}. Response: {RawContent}", userId, instanceData.RawContent);
+            await FollowupAsync("Failed to get instances", ephemeral: true);
+            return;
+        }
+        var instance = instances.First(i => i.Id == target);
+        var sourceAppKind = instance.AppKind ?? "tpm";
+        var targetAppKind = instanceType ?? sourceAppKind;
+        Dictionary<string, string> settings = [];
+        if (resetConfig)
+        {
+            var settingsResponse = await vpsApi.VpsUserInstanceIdSettingsGetAsync(userId, target);
+            if (!settingsResponse.TryOk(out var currentSettings))
+                logger.LogError("Failed to get settings for instance {InstanceId}. Response: {RawContent}", target, settingsResponse.RawContent);
+            else
+                settings = currentSettings;
+        }
         await vpsApi.VpsUserInstanceIdTurnOffPostAsync(userId, target);
         if (instanceType != null)
         {
-            var instanceData = await vpsApi.VpsInstancesGetAsync(userId);
-            if (!instanceData.TryOk(out var instances))
-            {
-                logger.LogError("Failed to get instances for user {UserId}. Response: {RawContent}", userId, instanceData.RawContent);
-                await FollowupAsync("Failed to get instances", ephemeral: true);
-                return;
-            }
-            var instance = instances.FirstOrDefault(i => i.Id == target);
             var resetResult = await vpsApi.VpsUserInstanceIdResetPostAsync(userId, target, new VpsCreateRequest()
             {
                 AppKind = instanceType
@@ -443,28 +458,23 @@ public partial class VpsCommands : InteractionModuleBase
         logger.LogInformation("Attempting to reset VPS instance {InstanceId} for user {UserId}. PreserveGameState: {PreserveGameState}, PreserveConfig: {PreserveConfig}", target, userId, resetLogin, resetConfig);
         if (resetLogin)
         {
-            await ResetUserLogin(userId);
+            await ResetUserLogin(userId, target, targetAppKind);
         }
         if (resetConfig)
         {
-            var settingsResponse = await vpsApi.VpsUserInstanceIdSettingsGetAsync(userId, target);
-            if (!settingsResponse.TryOk(out var settings))
-            {
-                logger.LogError("Failed to get settings for instance {InstanceId}. Response: {RawContent}", target, settingsResponse.RawContent);
-                settings = [];
-            }
-            await settingsApi.SettingsUpdateSettingAsync(userId, "tpm_config", JsonConvert.SerializeObject(null));
+            var sourceIgn = settings.GetValueOrDefault(sourceAppKind == "fbaf" ? "ingame_name" : "igns") ?? "";
+            var sourceWebhook = settings.GetValueOrDefault(sourceAppKind == "fbaf" ? "webhook_url" : "webhooks") ?? "";
+            await settingsApi.SettingsUpdateSettingAsync(userId, targetAppKind == "fbaf" ? "fbaf_config" : "tpm_config", JsonConvert.SerializeObject(null));
             await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
             {
-                Setting = "webhooks",
-                Value = settings.GetValueOrDefault("webhooks") ?? ""
+                Setting = targetAppKind == "fbaf" ? "webhook_url" : "webhooks",
+                Value = sourceWebhook
             }));
-            var igns = settings.GetValueOrDefault("igns") ?? "";
-            if (igns != null && !igns.Contains(":"))
+            if (!sourceIgn.Contains(":"))
                 await vpsApi.VpsUserInstanceIdSetPostAsync(userId, target, new(new()
                 {
-                    Setting = "igns",
-                    Value = igns
+                    Setting = targetAppKind == "fbaf" ? "ingame_name" : "igns",
+                    Value = sourceIgn
                 }));
             var message = "Reset general config, copied over ign and webhooks";
             if (!resetLogin)
@@ -474,9 +484,12 @@ public partial class VpsCommands : InteractionModuleBase
         await vpsApi.VpsUserInstanceIdTurnOnPostAsync(userId, target);
     }
 
-    private async Task ResetUserLogin(string userId)
+    private async Task ResetUserLogin(string userId, Guid instanceId, string appKind)
     {
-        await UpdateSetting<string?>(userId, "tpm_extra_config", null);
+        if (appKind == "fbaf")
+            await vpsApi.VpsUserInstanceIdSetPostAsync(userId, instanceId, new(new() { Setting = "reset_login", Value = "true" }));
+        else
+            await UpdateSetting<string?>(userId, "tpm_extra_config", null);
         await FollowupAsync("Reset login details", ephemeral: true);
     }
 
@@ -512,7 +525,9 @@ public partial class VpsCommands : InteractionModuleBase
             await FollowupAsync("Failed to get current settings, check `/vps info` please", ephemeral: true);
             return;
         }
-        if (settings.TryGetValue("igns", out var igns) && string.IsNullOrWhiteSpace(igns))
+        var appKind = instance.AppKind ?? "tpm";
+        var ignSetting = appKind == "fbaf" ? "ingame_name" : "igns";
+        if (!settings.TryGetValue(ignSetting, out var igns) || string.IsNullOrWhiteSpace(igns))
         {
             await ModifyOriginalResponseAsync(msg =>
             {
@@ -530,28 +545,25 @@ public partial class VpsCommands : InteractionModuleBase
             var lines = await lokiQuery.GetVpsLog(target, DateTimeOffset.UtcNow.AddMinutes(i == 0 ? -65 : -2), DateTimeOffset.UtcNow, 30);
             foreach (var item in lines)
             {
-                if (item.Contains("https://www.microsoft.com/link"))
+                var loginMatch = MicrosoftLoginLink.Match(item);
+                if (loginMatch.Success)
                 {
-                    var loginMatch = Regex.Match(item, @"http:\/\/microsoft.com\/link\?otc=[a-zA-Z0-9]+");
-                    if (loginMatch.Success)
+                    await ModifyOriginalResponseAsync(msg =>
                     {
-                        await ModifyOriginalResponseAsync(msg =>
-                        {
-                            msg.Content = $"Please login to your microsoft account by clicking the link: {loginMatch.Groups[0].Value}";
-                            msg.Components = new ComponentBuilder()
-                                .WithButton("Login with Microsoft", url: loginMatch.Groups[0].Value, style: ButtonStyle.Link)
-                                .Build();
-                        });
-                        await Task.Delay(10000);
-                        continue;
-                    }
+                        msg.Content = $"Please login to your microsoft account by clicking the link: {loginMatch.Value}";
+                        msg.Components = new ComponentBuilder()
+                            .WithButton("Login with Microsoft", url: loginMatch.Value, style: ButtonStyle.Link)
+                            .Build();
+                    });
+                    await Task.Delay(10000);
+                    continue;
                 }
-                var match = Regex.Match(item, $@"^(.*) logged in!$");
-                if (!match.Success)
+                var loggedInIgn = GetLoggedInName(item, appKind, igns);
+                if (loggedInIgn == null)
                     continue;
                 await ModifyOriginalResponseAsync(msg =>
                         {
-                            msg.Content = $"Started and logged in as `{match.Groups[1].Value}`";
+                            msg.Content = $"Started and logged in as `{loggedInIgn}`";
                             msg.Components = new ComponentBuilder()
                                 .WithButton("Show Log", "show-log", ButtonStyle.Primary)
                                 .Build();
@@ -571,7 +583,7 @@ public partial class VpsCommands : InteractionModuleBase
         });
     }
 
-    [SlashCommand("import", "Import json vps settings, eg from TPM")]
+    [SlashCommand("import", "Import JSON settings for the current VPS app")]
     public async Task VpsImport(IAttachment settingsFile)
     {
         (string userId, Guid target) = await GetInstanceId();
@@ -638,9 +650,9 @@ public partial class VpsCommands : InteractionModuleBase
     [ComponentInteraction("reset-login", true)]
     public async Task ResetLogin()
     {
-        (string userId, Guid target) = await GetInstanceId();
-
-        await ResetUserLogin(userId);
+        await DeferAsync(ephemeral: true);
+        (var profile, var instance) = await GetInstance();
+        await ResetUserLogin(profile.UserId, instance.Id!.Value, instance.AppKind ?? "tpm");
         var originalContext = Context.Interaction as SocketMessageComponent;
 
         await originalContext!.ModifyOriginalResponseAsync(m =>
@@ -720,7 +732,7 @@ public partial class VpsCommands : InteractionModuleBase
 
         var nanoSeconds = (startTime - TimeSpan.FromDays(1)).ToUnixTimeMilliseconds() * 1_000_000;
         var url = configuration["LOKI_BASE_URL"].Replace("http:", "ws:") + "/loki/api/v1/tail";
-        var query = $"{{container=\"tpm-manager\", instance_id=\"{target}\"}}";
+        var query = $"{{instance_id=\"{target}\"}}";
         // Follow logs using WebSocket
         try
         {
@@ -976,6 +988,14 @@ public partial class VpsCommands : InteractionModuleBase
     private async Task UpdateSetting<T>(string userId, string key, T data)
     {
         await settingsApi.SettingsUpdateSettingAsync(userId, key, JsonConvert.SerializeObject(JsonConvert.SerializeObject(data)));
+    }
+
+    private static string? GetLoggedInName(string line, string appKind, string requestedIgn)
+    {
+        if (appKind == "fbaf" && (line.Contains("Bot logged in successfully") || line.Contains("Bot logged into Minecraft successfully")))
+            return requestedIgn.Split(',').FirstOrDefault()?.Trim();
+        var match = Regex.Match(line, @"(?:\[TPM\] )?([^\s]+) logged in!$");
+        return match.Success ? match.Groups[1].Value : null;
     }
 
     // Add class to deserialize WebSocket responses

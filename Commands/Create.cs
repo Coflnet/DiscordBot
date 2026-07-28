@@ -50,6 +50,12 @@ public partial class VpsCommands
         {
             await VpsCreate("tpm", ign, webHookChannel);
         }
+        [SlashCommand("fbaf", "Create a managed Frikadellen BAF instance")]
+        [DefaultMemberPermissions(GuildPermission.SendMessages)]
+        public async Task VpsCreateFbaf([Autocomplete(typeof(McNameAutocompleteHandler))] string ign, ITextChannel? webHookChannel = null)
+        {
+            await VpsCreate("fbaf", ign, webHookChannel);
+        }
         public async Task VpsCreate(string kind, string ign, ITextChannel? webHookChannel = null)
         {
             await DeferAsync(ephemeral: true);
@@ -176,7 +182,7 @@ public partial class VpsCommands
                 }));
             await vpsApi.VpsUserInstanceIdSetPostAsync(newInstance.OwnerId, newInstance.Id ?? default, new(new()
             {
-                Setting = "discordID",
+                Setting = kind == "fbaf" ? "discord_id" : "discordID",
                 Value = Context.User.Id.ToString()
             }));
             if (webHookChannel != null)
@@ -216,7 +222,7 @@ public partial class VpsCommands
             }
             await vpsApi.VpsUserInstanceIdSetPostAsync(newInstance.OwnerId, newInstance.Id ?? default, new(new()
             {
-                Setting = "webhooks",
+                Setting = newInstance.AppKind == "fbaf" ? "webhook_url" : "webhooks",
                 Value = $"https://discord.com/api/webhooks/{existingWebhook.Id}/{existingWebhook.Token}"
             }));
             var webhook = await webHookChannel.SendMessageAsync($"New instance created for {ign}, webhooks will be sent here");
@@ -224,6 +230,7 @@ public partial class VpsCommands
 
         private async Task<bool> HandleLogin(string ign, Instance newInstance)
         {
+            var appKind = newInstance.AppKind ?? "tpm";
             if (newInstance.PaidUntil < DateTime.UtcNow)
             {
                 await ModifyOriginalResponseAsync(msg =>
@@ -238,7 +245,7 @@ public partial class VpsCommands
             }
             await vpsApi.VpsUserInstanceIdSetPostAsync(newInstance.OwnerId, newInstance.Id ?? default, new(new()
             {
-                Setting = "igns",
+                Setting = appKind == "fbaf" ? "ingame_name" : "igns",
                 Value = ign
             }));
             await vpsApi.VpsUserInstanceIdTurnOnPostAsync(newInstance.OwnerId, newInstance.Id ?? default);
@@ -249,8 +256,8 @@ public partial class VpsCommands
                 var lines = await lokiQuery.GetVpsLog(newInstance.Id ?? default, DateTimeOffset.Now.AddMinutes(-5), DateTimeOffset.Now, 100);
                 foreach (var item in lines)
                 {
-                    var match = Regex.Match(item, @".*(http://microsoft.com/link\?.*)");
-                    if (item.Contains(" logged in!"))
+                    var match = MicrosoftLoginLink().Match(item);
+                    if (LoggedInName(item, appKind, ign) != null)
                     {
                         // seemingly already logged in in the past, continue to next step
                         i = 20;
@@ -258,7 +265,7 @@ public partial class VpsCommands
                     }
                     if (!match.Success)
                         continue;
-                    var link = match.Groups[1].Value;
+                    var link = match.Value;
                     var button = new ComponentBuilder()
                         .WithButton("Click here to login with microsoft", style: ButtonStyle.Link, url: link);
                     await ModifyOriginalResponseAsync(msg =>
@@ -284,10 +291,9 @@ public partial class VpsCommands
                 var lines = await lokiQuery.GetVpsLog(newInstance.Id ?? default, DateTimeOffset.Now.AddMinutes(-5), DateTimeOffset.Now, 100);
                 foreach (var item in lines)
                 {
-                    var match = Regex.Match(item, $@"^(.*) logged in!$");
-                    if (!match.Success)
+                    var foundIgn = LoggedInName(item, appKind, ign);
+                    if (foundIgn == null)
                         continue;
-                    var foundIgn = match.Groups[1].Value;
                     if (foundIgn != ign)
                     {
                         await ModifyOriginalResponseAsync(msg =>
@@ -297,7 +303,7 @@ public partial class VpsCommands
                             {
                                 Title = "Logged in with another account",
                                 Description = $"Your instance is ready to use, but you logged in with {foundIgn} instead of **{ign}**, please re-run the command with that username.\n"
-                                + $"`/vps create tpm_plus ign:{foundIgn}`",
+                                + $"`/vps create {appKind.Replace("+", "_plus")} ign:{foundIgn}`",
                                 Color = Color.Red
                             }.Build();
                         });
@@ -340,6 +346,16 @@ public partial class VpsCommands
             }
 
             return false;
+        }
+
+        private static Regex MicrosoftLoginLink() => new(@"https?://(?:www\.)?microsoft\.com/link\?otc=[A-Za-z0-9]+", RegexOptions.IgnoreCase);
+
+        private static string? LoggedInName(string line, string appKind, string requestedIgn)
+        {
+            if (appKind == "fbaf" && (line.Contains("Bot logged in successfully") || line.Contains("Bot logged into Minecraft successfully")))
+                return requestedIgn;
+            var match = Regex.Match(line, @"(?:\[TPM\] )?([^\s]+) logged in!$");
+            return match.Success ? match.Groups[1].Value : null;
         }
 
         public virtual string GetAuthLink(string stringId)

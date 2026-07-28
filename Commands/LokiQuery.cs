@@ -19,7 +19,7 @@ public class LokiQuery
 
     internal async Task<IEnumerable<string>> GetVpsLog(Guid instance, DateTimeOffset from, DateTimeOffset to, int limit = 20, bool addTime = false)
     {
-        var query = $"{{container=\"tpm-manager\", instance_id=\"{instance}\"}}";
+        var query = $"{{instance_id=\"{instance}\"}}";
         var start = from.ToUnixTimeSeconds();
         var end = to.ToUnixTimeSeconds();
         return await QueryLoki(query, start, end, limit, addTime);
