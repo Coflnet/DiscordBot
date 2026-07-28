@@ -821,7 +821,7 @@ public partial class VpsCommands : InteractionModuleBase
                     continue;
                 }
                 var message = System.Text.Encoding.UTF8.GetString(buffer, 0, result.Count);
-                logger.LogInformation("Received message: {message}", message);
+                logger.LogDebug("Received VPS log-stream message");
                 var logEntry = JsonConvert.DeserializeObject<LogStreamResponse>(message);
 
                 if ((logEntry?.streams?.FirstOrDefault()?.values?.Any()) != true)

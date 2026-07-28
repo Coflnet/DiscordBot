@@ -184,7 +184,7 @@ public class DiscordHandler : BackgroundService
                 {
                     logger.LogError("Failed to send message to discord");
                 }
-                logger.LogInformation("Sent message to discord {msg}", messageContent);
+                logger.LogInformation("Forwarded Minecraft chat message to Discord");
             }
             var account = persistence.GetDiscordAccountInfoByMcUuid(Guid.Parse(message.Uuid));
             if (account == default)
@@ -404,8 +404,12 @@ public class DiscordHandler : BackgroundService
         // ignore messages from bots and webhooks
         if (msg.Author.IsBot || msg.Author.IsWebhook) return;
         var channelName = (msg.Channel as SocketGuildChannel)?.Name;
-        var mentionsToName = msg.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
-        Console.WriteLine(msg.Content + " in " + channelName);
+
+        if (MessageController.IsConfiguredCacheChannel(msg.Channel.Id))
+        {
+            var mentionedUsers = msg.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
+            await persistence.SaveDiscordMessage(MessageController.MapMessage(msg, mentionedUsers));
+        }
 
         // Detect a compromised account dumping images into multiple channels in fast succession.
         if (await HandleMultiChannelImageSpam(msg))
@@ -498,7 +502,8 @@ public class DiscordHandler : BackgroundService
         // #6: Nitro scam link detection (ported from Node.js bot)
         if (NitroRegex.IsMatch(msg.Content))
         {
-            logger.LogInformation("Deleted nitro scam link from {userId}: {content}", msg.Author.Id, msg.Content);
+            logger.LogInformation("Deleted nitro scam link message {messageId} from {userId} in {channelId}",
+                msg.Id, msg.Author.Id, msg.Channel.Id);
             await msg.DeleteAsync();
             return;
         }
@@ -507,7 +512,6 @@ public class DiscordHandler : BackgroundService
         if (CheckOneWordSpam(msg))
             return;
 
-        await persistence.SaveDiscordMessage(MessageController.MapMessage(msg, mentionsToName));
         if (msg.Content.Contains("steamcommunity.com"))
         {
             // delete steam links

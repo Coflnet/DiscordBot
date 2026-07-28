@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Coflnet.Discord;
 
@@ -8,6 +9,8 @@ namespace Coflnet.Discord;
 /// </summary>
 public class FaqService
 {
+    private const int MaxLoggedMessageLength = 100;
+    private static readonly Regex DiscordUserMention = new(@"<@!?\d+>", RegexOptions.Compiled);
     private readonly ILogger<FaqService> logger;
     private List<FaqEntry> entries = new();
 
@@ -58,12 +61,19 @@ public class FaqService
             // All question keywords must be present
             if (entry.Question.All(q => lower.Contains(q)))
             {
-                logger.LogInformation("FAQ matched: '{message}' -> '{answer}'", message, entry.Answer);
+                logger.LogInformation("FAQ matched keywords {keywords} for message '{message}'",
+                    string.Join(", ", entry.Question), CreateLogSample(message));
                 return entry.Answer;
             }
         }
 
         return null;
+    }
+
+    internal static string CreateLogSample(string message)
+    {
+        var sanitized = DiscordUserMention.Replace(message, "@user").ReplaceLineEndings(" ");
+        return sanitized[..Math.Min(sanitized.Length, MaxLoggedMessageLength)];
     }
 }
 

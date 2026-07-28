@@ -59,6 +59,8 @@ public partial class VpsCommands
         public async Task VpsCreate(string kind, string ign, ITextChannel? webHookChannel = null)
         {
             await DeferAsync(ephemeral: true);
+            await ModifyOriginalResponseAsync(message =>
+                message.Content = "Preparing the managed instance. [Privacy details](https://coflnet.com/privacy#75a-coflnet-operated-minecraft-hosting)");
             var playerSearch = await searchApi.ApiSearchPlayerPlayerNameGetAsync(ign);
             ign = playerSearch.First().Name; // also important for correct casing
             var profile = await persistence.GetDiscordAccountInfo(Context.User.Id);
@@ -69,7 +71,7 @@ public partial class VpsCommands
             {
                 (_, var targetId) = ComputeConnectionId(Context.User.Id.ToString(), Guid.NewGuid().ToString());
                 var link = GetAuthLink(targetId);
-                logger.LogInformation("User {user} not found, sending auth link {link} with id {id}", Context.User.Id, link, targetId);
+                logger.LogInformation("User {user} not found, sending account-authentication link for connection {id}", Context.User.Id, targetId);
                 var button = new ComponentBuilder()
                     .WithButton("Click to login via website", style: ButtonStyle.Link, url: link).Build();
                 message = await FollowupAsync($"You don't seem to have verified a minecraft account, use `/update-mc-user` or click [here to login via the website]({link})", ephemeral: true, components: button);
@@ -270,7 +272,7 @@ public partial class VpsCommands
                         .WithButton("Click here to login with microsoft", style: ButtonStyle.Link, url: link);
                     await ModifyOriginalResponseAsync(msg =>
                     {
-                        msg.Content = "Started your instance";
+                        msg.Content = "Started your instance. Before signing in, review the [Minecraft-hosting privacy details](https://coflnet.com/privacy#75a-coflnet-operated-minecraft-hosting).";
                         msg.Components = button.Build();
                     });
                     i = 20;
@@ -279,7 +281,7 @@ public partial class VpsCommands
                 if (i == 19)
                 {
                     var referenceId = Guid.NewGuid();
-                    logger.LogInformation("Failed to get login link {lines} for {instance}, referenceId: {refernceId}", string.Join("\n", lines), newInstance.Id, referenceId);
+                    logger.LogInformation("Failed to get login link for {instance}, referenceId: {refernceId}", newInstance.Id, referenceId);
                     await ModifyOriginalResponseAsync(msg => msg.Content = $"Failed to get login link, please check `/vps log`, try again (with `/vps start` or reset with `/vps reset reset-login:True`) or ask Äkwav to help and give him `{referenceId}`");
                     return false;
                 }

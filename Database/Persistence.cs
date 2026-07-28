@@ -30,12 +30,17 @@ public class Persistence
         var messageMapping = new MappingConfiguration().Define(
             new Map<DiscordMessage>()
                 .TableName("messages")
+                .ExplicitColumns()
                 .PartitionKey(m => m.ChannelId, m => m.Month)
                 .ClusteringKey(m => m.MessageId)
                 .Column(m => m.MessageId, cm => cm.WithDbType<BigInteger>())
-                .Column(m => m.AuthorId, cm => cm.WithDbType<BigInteger>())
                 .Column(m => m.ChannelId, cm => cm.WithDbType<BigInteger>())
-                .Column(m=>m.Attachments, cm => cm.WithDbType<Dictionary<long, string>>())
+                .Column(m => m.Month)
+                .Column(m => m.Content)
+                .Column(m => m.CreatedAt)
+                .Column(m => m.Attachments, cm => cm.WithDbType<Dictionary<long, string>>())
+                .Column(m => m.AuthorName)
+                .Column(m => m.UpdateAt)
         );
         var table = new Table<DiscordAccountInfo>(session, mapping);
         byMcUuid = new Table<DiscordAccountInfo>(session, byUuidMapping);
