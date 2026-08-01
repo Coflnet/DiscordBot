@@ -31,6 +31,8 @@ public sealed class TwilioMediaBridge(
         try
         {
             var start = await ReceiveAsync(webSocket, callCancellation.Token);
+            if (start?.Event == "connected")
+                start = await ReceiveAsync(webSocket, callCancellation.Token);
             callSid = start?.Start?.CallSid;
             var parameters = start?.Start?.CustomParameters;
             if (start?.Event != "start"
