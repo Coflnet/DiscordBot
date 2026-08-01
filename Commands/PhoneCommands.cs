@@ -7,6 +7,45 @@ public sealed class PhoneCommands(
     TwilioCallGate callGate,
     ILogger<PhoneCommands> logger) : InteractionModuleBase
 {
+    [SlashCommand("missed-phone-calls", "Show recent calls that could not be connected")]
+    [DefaultMemberPermissions(GuildPermission.Administrator)]
+    [RequireUserPermission(GuildPermission.Administrator)]
+    public async Task MissedPhoneCalls(
+        [Summary("clear", "Clear the stored missed-call history")] bool clear = false)
+    {
+        await DeferAsync(ephemeral: true);
+        try
+        {
+            if (clear)
+            {
+                await callGate.ClearMissedCallsAsync();
+                await FollowupAsync("Missed phone-call history cleared.", ephemeral: true);
+                return;
+            }
+
+            var calls = await callGate.GetMissedCallsAsync();
+            if (calls.Count == 0)
+            {
+                await FollowupAsync("No missed phone calls were recorded in the last 30 days.", ephemeral: true);
+                return;
+            }
+
+            var lines = calls.Select(call =>
+                $"<t:{call.Timestamp.ToUnixTimeSeconds()}:R> — caller `{call.CallerReference}` — "
+                + (call.Reason == MissedCallReason.TargetUnavailable
+                    ? "target unavailable"
+                    : "another call was in progress"));
+            await FollowupAsync(
+                "Recent missed phone calls (newest first):\n" + string.Join('\n', lines),
+                ephemeral: true);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Could not retrieve missed phone calls");
+            await FollowupAsync("Could not retrieve missed phone calls. Check the bot logs.", ephemeral: true);
+        }
+    }
+
     [SlashCommand("test-phone-call", "Test the phone waiting-room handoff without placing a call")]
     [DefaultMemberPermissions(GuildPermission.Administrator)]
     [RequireUserPermission(GuildPermission.Administrator)]

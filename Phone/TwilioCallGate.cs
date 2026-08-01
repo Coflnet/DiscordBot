@@ -13,11 +13,23 @@ public enum CallAdmission
     RateLimited
 }
 
+public enum MissedCallReason
+{
+    TargetUnavailable,
+    LineBusy
+}
+
+public sealed record MissedPhoneCall(DateTimeOffset Timestamp, string CallerReference, MissedCallReason Reason);
+
 public sealed class TwilioCallGate(
     IConnectionMultiplexer redis,
-    IOptions<TwilioVoiceOptions> options)
+    IOptions<TwilioVoiceOptions> options,
+    ILogger<TwilioCallGate> logger)
 {
     private const string ActiveCallKey = "discordbot:phone:active";
+    private const string MissedCallsKey = "discordbot:phone:missed";
+    private const int MaxStoredMissedCalls = 50;
+    private static readonly TimeSpan MissedCallRetention = TimeSpan.FromDays(30);
     private static readonly LuaScript RateLimitScript = LuaScript.Prepare(
         """
         redis.call('ZREMRANGEBYSCORE', @key, '-inf', @cutoff)
@@ -94,6 +106,38 @@ public sealed class TwilioCallGate(
         });
     }
 
+    public async Task RecordMissedCallAsync(string caller, MissedCallReason reason)
+    {
+        try
+        {
+            var timestamp = DateTimeOffset.UtcNow;
+            var entry = string.Join('|',
+                timestamp.ToUnixTimeSeconds(),
+                HashCaller(caller)[..8],
+                (int)reason);
+            await database.ListLeftPushAsync(MissedCallsKey, entry);
+            await database.ListTrimAsync(MissedCallsKey, 0, MaxStoredMissedCalls - 1);
+            await database.KeyExpireAsync(MissedCallsKey, MissedCallRetention);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not record missed phone call");
+        }
+    }
+
+    public async Task<IReadOnlyList<MissedPhoneCall>> GetMissedCallsAsync(int limit = 20)
+    {
+        var entries = await database.ListRangeAsync(MissedCallsKey, 0, Math.Clamp(limit, 1, MaxStoredMissedCalls) - 1);
+        var cutoff = DateTimeOffset.UtcNow - MissedCallRetention;
+        return entries
+            .Select(ParseMissedCall)
+            .Where(call => call is not null && call.Timestamp >= cutoff)
+            .Select(call => call!)
+            .ToArray();
+    }
+
+    public Task ClearMissedCallsAsync() => database.KeyDeleteAsync(MissedCallsKey);
+
     public string CreateStreamToken(string callSid)
     {
         var expires = DateTimeOffset.UtcNow.AddMinutes(options.MaxCallMinutes + 2).ToUnixTimeSeconds();
@@ -119,6 +163,21 @@ public sealed class TwilioCallGate(
     {
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(options.CallerHashKey));
         return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes($"caller:{caller}")));
+    }
+
+    private static MissedPhoneCall? ParseMissedCall(RedisValue entry)
+    {
+        var parts = entry.ToString().Split('|', 3);
+        if (parts.Length != 3
+            || !long.TryParse(parts[0], CultureInfo.InvariantCulture, out var timestamp)
+            || !int.TryParse(parts[2], CultureInfo.InvariantCulture, out var reason)
+            || !Enum.IsDefined(typeof(MissedCallReason), reason))
+            return null;
+
+        return new MissedPhoneCall(
+            DateTimeOffset.FromUnixTimeSeconds(timestamp),
+            parts[1],
+            (MissedCallReason)reason);
     }
 
     private string Sign(string callSid, long expires)

@@ -31,7 +31,10 @@ public sealed class TwilioVoiceController(
             return Twiml(TwilioVoiceTwiml.Reject());
 
         if (!discord.IsUserInVoiceChannel(options.TargetUserId, options.VoiceChannelId))
+        {
+            await callGate.RecordMissedCallAsync(form["From"].ToString(), MissedCallReason.TargetUnavailable);
             return Twiml(TwilioVoiceTwiml.PlayAndHangup(prompts.Unavailable));
+        }
 
         var continueUrl = $"{options.PublicBaseUrl.TrimEnd('/')}/api/twilio/voice/continue"
             + $"?language={TwilioVoiceOptions.LanguageCode(language)}";
@@ -53,11 +56,19 @@ public sealed class TwilioVoiceController(
             return Twiml(TwilioVoiceTwiml.Hangup());
 
         if (!discord.IsUserInVoiceChannel(options.TargetUserId, options.VoiceChannelId))
+        {
+            await callGate.RecordMissedCallAsync(form["From"].ToString(), MissedCallReason.TargetUnavailable);
             return Twiml(TwilioVoiceTwiml.PlayAndHangup(options.Prompts(language).Unavailable));
+        }
 
         var callSid = form["CallSid"].ToString();
-        if (string.IsNullOrWhiteSpace(callSid) || !await callGate.TryReserveAsync(callSid))
+        if (string.IsNullOrWhiteSpace(callSid))
             return Twiml(TwilioVoiceTwiml.PlayAndHangup(options.Prompts(language).Unavailable));
+        if (!await callGate.TryReserveAsync(callSid))
+        {
+            await callGate.RecordMissedCallAsync(form["From"].ToString(), MissedCallReason.LineBusy);
+            return Twiml(TwilioVoiceTwiml.PlayAndHangup(options.Prompts(language).Unavailable));
+        }
 
         return Twiml(TwilioVoiceTwiml.Connect(
             options.MediaStreamUrl,

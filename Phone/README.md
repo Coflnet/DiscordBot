@@ -26,6 +26,11 @@ The inbound flow is:
 10. End the call when the caller disconnects, the target leaves, or the
     configured duration expires, then return the target to the waiting room.
 
+Calls that cannot connect because the target is unavailable or another call is
+active are retained in Redis for up to 30 days (maximum 50 entries). The bot
+stores only the time, reason, and a short HMAC-derived caller reference. An
+administrator can review or clear them with `/missed-phone-calls`.
+
 ## Configuration
 
 Keep the feature disabled until the number, public endpoints, and recordings
