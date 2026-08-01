@@ -1,18 +1,28 @@
 using Coflnet.DiscordBot.Phone;
 using Discord;
 using Discord.Interactions;
+using Microsoft.Extensions.Options;
 
 public sealed class PhoneCommands(
     DiscordCallHandoff handoff,
     TwilioCallGate callGate,
+    IOptions<TwilioVoiceOptions> options,
     ILogger<PhoneCommands> logger) : InteractionModuleBase
 {
+    private readonly TwilioVoiceOptions options = options.Value;
+
     [SlashCommand("missed-phone-calls", "Show recent calls that could not be connected")]
     [DefaultMemberPermissions(GuildPermission.Administrator)]
     [RequireUserPermission(GuildPermission.Administrator)]
     public async Task MissedPhoneCalls(
         [Summary("clear", "Clear the stored missed-call history")] bool clear = false)
     {
+        if (Context.User.Id != options.TargetUserId)
+        {
+            await RespondAsync("You are not allowed to use this command.", ephemeral: true);
+            return;
+        }
+
         await DeferAsync(ephemeral: true);
         try
         {
@@ -52,6 +62,12 @@ public sealed class PhoneCommands(
     public async Task TestPhoneCall(
         [Summary("german", "Use the German disclosure recording")] bool german = false)
     {
+        if (Context.User.Id != options.TargetUserId)
+        {
+            await RespondAsync("You are not allowed to use this command.", ephemeral: true);
+            return;
+        }
+
         await DeferAsync(ephemeral: true);
         var reservation = $"test:{Context.Interaction.Id}";
         if (!await callGate.TryReserveAsync(reservation))
