@@ -13,8 +13,8 @@ The inbound flow is:
    callers and later calls receive a Twilio `<Reject>` before answer.
 3. Select German recordings for callers whose E.164 `From` number starts with
    `+49`; use English for all other callers.
-4. If the target user is absent, play the localized unavailable message and
-   hang up.
+4. If the target user is absent, play the localized unavailable message,
+   disclose recording, and offer a voicemail.
 5. Play the localized anti-bot prompt and require DTMF `1`.
 6. Recheck presence, reserve the single available bridge, and start a
    bidirectional Twilio Media Stream.
@@ -31,6 +31,13 @@ active are retained in Redis for up to 30 days (maximum 50 entries). The bot
 stores only the time, reason, and a short HMAC-derived caller reference. An
 administrator can review or clear them with `/missed-phone-calls`.
 
+Completed voicemails are indexed in Redis by their Twilio Recording SID and a
+notice is posted to the configured Discord channel. Only the configured target
+Discord user can open `/phone-voicemails`; its ephemeral menu downloads audio
+server-side and offers Play and Delete buttons. Delete removes the Twilio media
+and its Redis index. An hourly cleanup removes recordings older than the
+configured retention period.
+
 ## Configuration
 
 Keep the feature disabled until the number, public endpoints, and recordings
@@ -41,6 +48,10 @@ secrets to `appsettings.json`.
 TwilioVoice__Enabled=true
 TwilioVoice__PublicBaseUrl=https://PUBLIC_BOT_HOST
 TwilioVoice__MediaStreamUrl=wss://PUBLIC_BOT_HOST/api/twilio/voice/media
+TwilioVoice__Region=ie1
+TwilioVoice__VoicemailNotificationChannelId=DISCORD_CHANNEL_ID
+TwilioVoice__VoicemailMaxSeconds=120
+TwilioVoice__VoicemailRetentionDays=30
 TwilioVoice__EnglishPressOneAudioUrl=https://PUBLIC_ASSET_HOST/press-one-en.wav
 TwilioVoice__GermanPressOneAudioUrl=https://PUBLIC_ASSET_HOST/press-one-de.wav
 TwilioVoice__EnglishUnavailableAudioUrl=https://PUBLIC_ASSET_HOST/unavailable-en.wav
@@ -48,9 +59,19 @@ TwilioVoice__GermanUnavailableAudioUrl=https://PUBLIC_ASSET_HOST/unavailable-de.
 TwilioVoice__EnglishDiscordNoticeAudioUrl=https://PUBLIC_ASSET_HOST/notice-en.wav
 TwilioVoice__GermanDiscordNoticeAudioUrl=https://PUBLIC_ASSET_HOST/notice-de.wav
 TwilioVoice__AuthToken=TWILIO_AUTH_TOKEN
+TwilioVoice__ApiKeySid=OPTIONAL_TWILIO_API_KEY_SID
+TwilioVoice__ApiKeySecret=OPTIONAL_TWILIO_API_KEY_SECRET
 TwilioVoice__CallerHashKey=AT_LEAST_32_RANDOM_CHARACTERS
 TwilioVoice__StreamSigningKey=ANOTHER_32_RANDOM_CHARACTERS
 ```
+
+The Auth Token remains required for validating Twilio webhook signatures. For
+recording downloads and deletion, configure a region-matching restricted API
+key when possible. Supported regions are `us1`, `ie1`, and `au1`; regional
+requests use Twilio's current edge-specific API hostnames. When the optional
+API key pair is absent, the application
+uses the Account SID reported in Twilio's signed recording callback together
+with the Auth Token.
 
 Suggested caller recordings:
 

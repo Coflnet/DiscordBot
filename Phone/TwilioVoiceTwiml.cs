@@ -10,6 +10,43 @@ public static class TwilioVoiceTwiml
     public static string PlayAndHangup(string audioUrl)
         => Document(new XElement("Play", audioUrl), new XElement("Hangup"));
 
+    public static string Voicemail(
+        string actionUrl,
+        string statusUrl,
+        string audioUrl,
+        PhoneLanguage language,
+        int maxSeconds)
+        => Document(
+            new XElement("Play", audioUrl),
+            new XElement(
+                "Say",
+                new XAttribute("language", language == PhoneLanguage.German ? "de-DE" : "en-GB"),
+                language == PhoneLanguage.German
+                    ? "Sie können nach dem Signalton eine Nachricht hinterlassen. Ihre Nachricht wird aufgezeichnet. Drücken Sie zum Beenden die Raute-Taste."
+                    : "You can leave a voicemail after the tone. Your message will be recorded. Press hash when finished."),
+            new XElement(
+                "Record",
+                new XAttribute("action", actionUrl),
+                new XAttribute("method", "POST"),
+                new XAttribute("recordingStatusCallback", statusUrl),
+                new XAttribute("recordingStatusCallbackMethod", "POST"),
+                new XAttribute("recordingStatusCallbackEvent", "completed absent"),
+                new XAttribute("maxLength", maxSeconds),
+                new XAttribute("timeout", "5"),
+                new XAttribute("finishOnKey", "#"),
+                new XAttribute("playBeep", "true"),
+                new XAttribute("trim", "trim-silence")));
+
+    public static string VoicemailFinished(PhoneLanguage language)
+        => Document(
+            new XElement(
+                "Say",
+                new XAttribute("language", language == PhoneLanguage.German ? "de-DE" : "en-GB"),
+                language == PhoneLanguage.German
+                    ? "Vielen Dank. Ihre Nachricht wurde gespeichert."
+                    : "Thank you. Your message has been saved."),
+            new XElement("Hangup"));
+
     public static string Prompt(string actionUrl, string audioUrl)
         => Document(
             new XElement(

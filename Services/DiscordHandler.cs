@@ -242,6 +242,25 @@ public class DiscordHandler : BackgroundService
         }
     }
 
+    public async Task NotifyPhoneVoicemailAsync(
+        ulong channelId,
+        ulong targetUserId,
+        PhoneVoicemail voicemail)
+    {
+        if (client is null || await client.GetChannelAsync(channelId) is not IMessageChannel channel)
+        {
+            logger.LogWarning("Could not find the configured phone voicemail notification channel");
+            return;
+        }
+
+        var reason = voicemail.Reason == MissedCallReason.TargetUnavailable
+            ? "you were unavailable"
+            : "another call was in progress";
+        await channel.SendMessageAsync(
+            $"<@{targetUserId}> New phone voicemail ({voicemail.DurationSeconds}s, caller `{voicemail.CallerReference}`, {reason}). "
+            + "Use `/phone-voicemails` to listen or delete it.");
+    }
+
 
     private bool OnMcChatMessage(ChatMessage message)
     {

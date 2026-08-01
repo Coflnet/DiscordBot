@@ -113,7 +113,7 @@ public sealed class TwilioCallGate(
             var timestamp = DateTimeOffset.UtcNow;
             var entry = string.Join('|',
                 timestamp.ToUnixTimeSeconds(),
-                HashCaller(caller)[..8],
+                CallerReference(caller),
                 (int)reason);
             await database.ListLeftPushAsync(MissedCallsKey, entry);
             await database.ListTrimAsync(MissedCallsKey, 0, MaxStoredMissedCalls - 1);
@@ -137,6 +137,8 @@ public sealed class TwilioCallGate(
     }
 
     public Task ClearMissedCallsAsync() => database.KeyDeleteAsync(MissedCallsKey);
+
+    public string CallerReference(string caller) => HashCaller(caller)[..8];
 
     public string CreateStreamToken(string callSid)
     {

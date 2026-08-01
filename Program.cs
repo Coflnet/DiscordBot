@@ -68,6 +68,8 @@ builder.Services.AddOptions<TwilioVoiceOptions>()
 builder.Services.AddSingleton<TwilioRequestValidator>();
 builder.Services.AddSingleton<TwilioCallGate>();
 builder.Services.AddSingleton<TwilioMediaBridge>();
+builder.Services.AddSingleton<TwilioVoicemailService>();
+builder.Services.AddHostedService(services => services.GetRequiredService<TwilioVoicemailService>());
 builder.Services.AddHttpClient<DiscordCallHandoff>();
 
 var app = builder.Build();

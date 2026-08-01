@@ -24,6 +24,14 @@ public class TwilioVoiceOptionsTests
         Assert.That(TwilioVoiceOptions.IsValid(CompleteOptions()), Is.True);
     }
 
+    [Test]
+    public void ApiKeySecretRequiresSid()
+    {
+        var options = CompleteOptions();
+        options.ApiKeySecret = "not-a-real-secret";
+        Assert.That(TwilioVoiceOptions.IsValid(options), Is.False);
+    }
+
     private static TwilioVoiceOptions CompleteOptions() => new()
     {
         Enabled = true,

@@ -9,6 +9,7 @@ public sealed class TwilioVoiceController(
     IOptions<TwilioVoiceOptions> options,
     TwilioRequestValidator requestValidator,
     TwilioCallGate callGate,
+    TwilioVoicemailService voicemail,
     DiscordHandler discord,
     TwilioMediaBridge mediaBridge) : ControllerBase
 {
@@ -31,10 +32,7 @@ public sealed class TwilioVoiceController(
             return Twiml(TwilioVoiceTwiml.Reject());
 
         if (!discord.IsUserInVoiceChannel(options.TargetUserId, options.VoiceChannelId))
-        {
-            await callGate.RecordMissedCallAsync(form["From"].ToString(), MissedCallReason.TargetUnavailable);
-            return Twiml(TwilioVoiceTwiml.PlayAndHangup(prompts.Unavailable));
-        }
+            return await VoicemailAsync(form["From"].ToString(), language, MissedCallReason.TargetUnavailable);
 
         var continueUrl = $"{options.PublicBaseUrl.TrimEnd('/')}/api/twilio/voice/continue"
             + $"?language={TwilioVoiceOptions.LanguageCode(language)}";
@@ -56,25 +54,60 @@ public sealed class TwilioVoiceController(
             return Twiml(TwilioVoiceTwiml.Hangup());
 
         if (!discord.IsUserInVoiceChannel(options.TargetUserId, options.VoiceChannelId))
-        {
-            await callGate.RecordMissedCallAsync(form["From"].ToString(), MissedCallReason.TargetUnavailable);
-            return Twiml(TwilioVoiceTwiml.PlayAndHangup(options.Prompts(language).Unavailable));
-        }
+            return await VoicemailAsync(form["From"].ToString(), language, MissedCallReason.TargetUnavailable);
 
         var callSid = form["CallSid"].ToString();
         if (string.IsNullOrWhiteSpace(callSid))
             return Twiml(TwilioVoiceTwiml.PlayAndHangup(options.Prompts(language).Unavailable));
         if (!await callGate.TryReserveAsync(callSid))
-        {
-            await callGate.RecordMissedCallAsync(form["From"].ToString(), MissedCallReason.LineBusy);
-            return Twiml(TwilioVoiceTwiml.PlayAndHangup(options.Prompts(language).Unavailable));
-        }
+            return await VoicemailAsync(form["From"].ToString(), language, MissedCallReason.LineBusy);
 
         return Twiml(TwilioVoiceTwiml.Connect(
             options.MediaStreamUrl,
             callSid,
             callGate.CreateStreamToken(callSid),
             TwilioVoiceOptions.LanguageCode(language)));
+    }
+
+    [HttpPost("voicemail/finished")]
+    public async Task<IActionResult> VoicemailFinished()
+    {
+        if (!options.Enabled)
+            return NotFound();
+        if (!await requestValidator.IsValidWebhookAsync(Request))
+            return StatusCode(StatusCodes.Status403Forbidden);
+        if (!TwilioVoiceOptions.TryParseLanguageCode(Request.Query["language"], out var language))
+            return StatusCode(StatusCodes.Status403Forbidden);
+
+        return Twiml(TwilioVoiceTwiml.VoicemailFinished(language));
+    }
+
+    [HttpPost("voicemail/status")]
+    public async Task<IActionResult> VoicemailStatus()
+    {
+        if (!options.Enabled)
+            return NotFound();
+        if (!await requestValidator.IsValidWebhookAsync(Request))
+            return StatusCode(StatusCodes.Status403Forbidden);
+        var callerReference = Request.Query["caller"].ToString();
+        if (!int.TryParse(Request.Query["reason"], out var reasonValue)
+            || !Enum.IsDefined(typeof(MissedCallReason), reasonValue)
+            || callerReference.Length != 8
+            || !callerReference.All(char.IsAsciiHexDigit))
+            return StatusCode(StatusCodes.Status403Forbidden);
+
+        var form = await Request.ReadFormAsync(HttpContext.RequestAborted);
+        if (form["RecordingStatus"] == "completed")
+        {
+            _ = int.TryParse(form["RecordingDuration"], out var duration);
+            await voicemail.StoreAsync(
+                form["AccountSid"].ToString(),
+                form["RecordingSid"].ToString(),
+                callerReference,
+                (MissedCallReason)reasonValue,
+                duration);
+        }
+        return NoContent();
     }
 
     [HttpGet("media")]
@@ -89,6 +122,23 @@ public sealed class TwilioVoiceController(
         }
 
         await mediaBridge.HandleAsync(HttpContext);
+    }
+
+    private async Task<IActionResult> VoicemailAsync(
+        string caller,
+        PhoneLanguage language,
+        MissedCallReason reason)
+    {
+        await callGate.RecordMissedCallAsync(caller, reason);
+        var baseUrl = options.PublicBaseUrl.TrimEnd('/');
+        var languageCode = TwilioVoiceOptions.LanguageCode(language);
+        var callerReference = callGate.CallerReference(caller);
+        return Twiml(TwilioVoiceTwiml.Voicemail(
+            $"{baseUrl}/api/twilio/voice/voicemail/finished?language={languageCode}",
+            $"{baseUrl}/api/twilio/voice/voicemail/status?reason={(int)reason}&caller={callerReference}",
+            options.Prompts(language).Unavailable,
+            language,
+            options.VoicemailMaxSeconds));
     }
 
     private ContentResult Twiml(string xml) => Content(xml, "application/xml");

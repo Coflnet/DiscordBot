@@ -53,6 +53,31 @@ public class TwilioVoiceTwimlTests
     }
 
     [Test]
+    public void VoicemailDisclosesAndReportsCompletedRecording()
+    {
+        var response = XDocument.Parse(TwilioVoiceTwiml.Voicemail(
+            "https://bot.example/api/twilio/voice/voicemail/finished?language=de",
+            "https://bot.example/api/twilio/voice/voicemail/status?reason=0",
+            "https://bot.example/unavailable-de.wav",
+            PhoneLanguage.German,
+            120));
+        var record = response.Root!.Element("Record")!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.Root.Element("Play")?.Value, Does.EndWith("unavailable-de.wav"));
+            Assert.That((string?)response.Root.Element("Say")?.Attribute("language"), Is.EqualTo("de-DE"));
+            Assert.That(response.Root.Element("Say")?.Value, Does.Contain("aufgezeichnet"));
+            Assert.That((string?)record.Attribute("action"), Does.EndWith("?language=de"));
+            Assert.That((string?)record.Attribute("recordingStatusCallback"), Does.EndWith("?reason=0"));
+            Assert.That((string?)record.Attribute("recordingStatusCallbackEvent"), Is.EqualTo("completed absent"));
+            Assert.That((string?)record.Attribute("maxLength"), Is.EqualTo("120"));
+            Assert.That((string?)record.Attribute("finishOnKey"), Is.EqualTo("#"));
+            Assert.That((string?)record.Attribute("playBeep"), Is.EqualTo("true"));
+        });
+    }
+
+    [Test]
     public void RateLimitedCallsAreRejectedBeforeAnswer()
     {
         var response = XDocument.Parse(TwilioVoiceTwiml.Reject());
