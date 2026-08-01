@@ -1,0 +1,347 @@
+using System.Collections.Concurrent;
+using System.Net.WebSockets;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading.Channels;
+using Discord;
+using Discord.Audio;
+using Microsoft.Extensions.Options;
+
+namespace Coflnet.DiscordBot.Phone;
+
+public sealed class TwilioMediaBridge(
+    IOptions<TwilioVoiceOptions> options,
+    TwilioCallGate callGate,
+    DiscordHandler discord,
+    DiscordCallHandoff handoff,
+    ILogger<TwilioMediaBridge> logger)
+{
+    private readonly TwilioVoiceOptions options = options.Value;
+
+    public async Task HandleAsync(HttpContext context)
+    {
+        using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+        string? callSid = null;
+        DiscordVoiceSession? session = null;
+        AudioOutStream? callerAudio = null;
+
+        using var callCancellation = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+        callCancellation.CancelAfter(TimeSpan.FromMinutes(options.MaxCallMinutes));
+
+        try
+        {
+            var start = await ReceiveAsync(webSocket, callCancellation.Token);
+            callSid = start?.Start?.CallSid;
+            var parameters = start?.Start?.CustomParameters;
+            if (start?.Event != "start"
+                || string.IsNullOrWhiteSpace(callSid)
+                || parameters is null
+                || !parameters.TryGetValue("CallSid", out var signedCallSid)
+                || signedCallSid != callSid
+                || !parameters.TryGetValue("Token", out var token)
+                || !callGate.IsValidStreamToken(callSid, token)
+                || !parameters.TryGetValue("Language", out var languageCode)
+                || !TwilioVoiceOptions.TryParseLanguageCode(languageCode, out var language)
+                || !await callGate.ActivateAsync(callSid))
+            {
+                await CloseAsync(webSocket, WebSocketCloseStatus.PolicyViolation, "Invalid stream", context.RequestAborted);
+                return;
+            }
+
+            session = await handoff.PrepareAsync(language, callCancellation.Token);
+            if (session is null)
+            {
+                await CloseAsync(webSocket, WebSocketCloseStatus.NormalClosure, "Unavailable", context.RequestAborted);
+                return;
+            }
+
+            callerAudio = session.AudioClient.CreatePCMStream(AudioApplication.Voice);
+            await BridgeAsync(webSocket, start.Start!.StreamSid, session, callerAudio, callCancellation);
+        }
+        catch (OperationCanceledException) when (callCancellation.IsCancellationRequested)
+        {
+        }
+        catch (WebSocketException exception)
+        {
+            logger.LogInformation(exception, "Twilio media stream ended");
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Twilio/Discord voice bridge failed");
+        }
+        finally
+        {
+            callCancellation.Cancel();
+            if (callerAudio is not null)
+            {
+                try
+                {
+                    await callerAudio.FlushAsync(CancellationToken.None);
+                    await callerAudio.DisposeAsync();
+                }
+                catch (Exception exception)
+                {
+                    logger.LogDebug(exception, "Could not cleanly close Discord caller audio");
+                }
+            }
+            if (session is not null)
+            {
+                try
+                {
+                    await handoff.EndAsync(session);
+                }
+                catch (Exception exception)
+                {
+                    logger.LogDebug(exception, "Could not cleanly disconnect Discord voice");
+                }
+            }
+            if (callSid is not null)
+                await callGate.ReleaseAsync(callSid);
+
+            if (webSocket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                await CloseAsync(webSocket, WebSocketCloseStatus.NormalClosure, "Call ended", CancellationToken.None);
+        }
+    }
+
+    private async Task BridgeAsync(
+        WebSocket webSocket,
+        string streamSid,
+        DiscordVoiceSession session,
+        AudioOutStream callerAudio,
+        CancellationTokenSource cancellation)
+    {
+        var discordFrames = Channel.CreateBounded<UserFrame>(new BoundedChannelOptions(100)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = false
+        });
+        var pumps = new ConcurrentDictionary<ulong, Task>();
+
+        Task StartPump(ulong userId, AudioInStream stream)
+        {
+            if (userId == session.BotUserId)
+                return Task.CompletedTask;
+            return pumps.GetOrAdd(userId, _ => PumpDiscordUserAsync(
+                userId,
+                stream,
+                discordFrames.Writer,
+                cancellation.Token));
+        }
+
+        Task StreamCreated(ulong userId, AudioInStream stream)
+        {
+            _ = StartPump(userId, stream);
+            return Task.CompletedTask;
+        }
+
+        session.AudioClient.StreamCreated += StreamCreated;
+        foreach (var stream in session.AudioClient.GetStreams())
+            _ = StartPump(stream.Key, stream.Value);
+
+        var outbound = MixAndSendAsync(webSocket, streamSid, discordFrames.Reader, cancellation.Token);
+        var presence = MonitorPresenceAsync(cancellation);
+
+        try
+        {
+            while (!cancellation.IsCancellationRequested && webSocket.State == WebSocketState.Open)
+            {
+                var message = await ReceiveAsync(webSocket, cancellation.Token);
+                if (message is null || message.Event == "stop")
+                    break;
+                if (message.Event != "media" || string.IsNullOrWhiteSpace(message.Media?.Payload))
+                    continue;
+
+                byte[] payload;
+                try
+                {
+                    payload = Convert.FromBase64String(message.Media.Payload);
+                }
+                catch (FormatException)
+                {
+                    throw new WebSocketException("Twilio sent an invalid media payload");
+                }
+                await callerAudio.WriteAsync(PcmuCodec.DecodeToDiscordPcm(payload), cancellation.Token);
+            }
+        }
+        finally
+        {
+            session.AudioClient.StreamCreated -= StreamCreated;
+            cancellation.Cancel();
+            discordFrames.Writer.TryComplete();
+            await IgnoreCancellation(outbound);
+            await IgnoreCancellation(presence);
+            await Task.WhenAll(pumps.Values.Select(IgnoreCancellation));
+        }
+    }
+
+    private async Task PumpDiscordUserAsync(
+        ulong userId,
+        AudioInStream stream,
+        ChannelWriter<UserFrame> writer,
+        CancellationToken cancellationToken)
+    {
+        var buffer = new byte[3840];
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var total = 0;
+                while (total < buffer.Length)
+                {
+                    var read = await stream.ReadAsync(
+                        buffer.AsMemory(total, buffer.Length - total),
+                        cancellationToken);
+                    if (read == 0)
+                        return;
+                    total += read;
+                }
+                await writer.WriteAsync(
+                    new UserFrame(userId, PcmuCodec.DownsampleDiscordPcm(buffer)),
+                    cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private static async Task MixAndSendAsync(
+        WebSocket webSocket,
+        string streamSid,
+        ChannelReader<UserFrame> reader,
+        CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(20));
+        var latest = new Dictionary<ulong, short[]>();
+        while (await timer.WaitForNextTickAsync(cancellationToken))
+        {
+            latest.Clear();
+            while (reader.TryRead(out var frame))
+                latest[frame.UserId] = frame.Samples;
+            if (latest.Count == 0)
+                continue;
+
+            var length = latest.Values.Min(samples => samples.Length);
+            var mixed = new short[length];
+            for (var index = 0; index < length; index++)
+            {
+                var sum = 0;
+                foreach (var samples in latest.Values)
+                    sum += samples[index];
+                mixed[index] = (short)Math.Clamp(sum, short.MinValue, short.MaxValue);
+            }
+
+            var message = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                @event = "media",
+                streamSid,
+                media = new { payload = Convert.ToBase64String(PcmuCodec.Encode(mixed)) }
+            });
+            await webSocket.SendAsync(message, WebSocketMessageType.Text, true, cancellationToken);
+        }
+    }
+
+    private async Task MonitorPresenceAsync(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+            while (await timer.WaitForNextTickAsync(cancellation.Token))
+            {
+                if (!discord.IsUserInVoiceChannel(options.TargetUserId, options.PrivateVoiceChannelId))
+                {
+                    cancellation.Cancel();
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+    }
+
+    private static async Task<TwilioStreamMessage?> ReceiveAsync(
+        WebSocket webSocket,
+        CancellationToken cancellationToken)
+    {
+        var buffer = new byte[64 * 1024];
+        var total = 0;
+        ValueWebSocketReceiveResult result;
+        do
+        {
+            result = await webSocket.ReceiveAsync(buffer.AsMemory(total), cancellationToken);
+            if (result.MessageType == WebSocketMessageType.Close)
+                return null;
+            total += result.Count;
+            if (total == buffer.Length && !result.EndOfMessage)
+                throw new WebSocketException("Twilio media message exceeded 64 KiB");
+        } while (!result.EndOfMessage);
+
+        return JsonSerializer.Deserialize<TwilioStreamMessage>(buffer.AsSpan(0, total));
+    }
+
+    private static async Task CloseAsync(
+        WebSocket webSocket,
+        WebSocketCloseStatus status,
+        string description,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await webSocket.CloseAsync(status, description, cancellationToken);
+        }
+        catch (WebSocketException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private static async Task IgnoreCancellation(Task task)
+    {
+        try
+        {
+            await task;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private sealed record UserFrame(ulong UserId, short[] Samples);
+
+    private sealed class TwilioStreamMessage
+    {
+        [JsonPropertyName("event")]
+        public string? Event { get; init; }
+
+        [JsonPropertyName("start")]
+        public TwilioStart? Start { get; init; }
+
+        [JsonPropertyName("media")]
+        public TwilioMedia? Media { get; init; }
+    }
+
+    private sealed class TwilioStart
+    {
+        [JsonPropertyName("streamSid")]
+        public string StreamSid { get; init; } = "";
+
+        [JsonPropertyName("callSid")]
+        public string? CallSid { get; init; }
+
+        [JsonPropertyName("customParameters")]
+        public Dictionary<string, string>? CustomParameters { get; init; }
+    }
+
+    private sealed class TwilioMedia
+    {
+        [JsonPropertyName("payload")]
+        public string? Payload { get; init; }
+    }
+}

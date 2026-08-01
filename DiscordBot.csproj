@@ -26,6 +26,7 @@
     <PackageReference Include="Octokit.GraphQL" Version="0.4.0-beta" />
     <PackageReference Include="StackExchange.Redis" Version="3.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.2" />
+    <PackageReference Include="Twilio" Version="7.14.9" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' == 'Release'">

@@ -10,6 +10,7 @@ using Coflnet.Sky.ModCommands.Client.Extensions;
 using Coflnet.Sky.ModCommands.Client.Client;
 using Coflnet.Core.Tracing;
 using Coflnet.Security.OpenBao;
+using Coflnet.DiscordBot.Phone;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -60,6 +61,14 @@ builder.Services.AddCoflnetCore();
 builder.Services.AddControllers();
 builder.Services.AddSingleton<ISearchApi>(di => new SearchApi(builder.Configuration["API_BASE_URL"]));
 builder.Services.AddSingleton<IConnectionMultiplexer>(s => ConnectionMultiplexer.Connect(builder.Configuration["CHAT_REDIS_HOST"]));
+builder.Services.AddOptions<TwilioVoiceOptions>()
+    .Bind(builder.Configuration.GetSection(TwilioVoiceOptions.SectionName))
+    .Validate(TwilioVoiceOptions.IsValid, "Enabled Twilio voice configuration is incomplete or contains non-public URLs")
+    .ValidateOnStart();
+builder.Services.AddSingleton<TwilioRequestValidator>();
+builder.Services.AddSingleton<TwilioCallGate>();
+builder.Services.AddSingleton<TwilioMediaBridge>();
+builder.Services.AddHttpClient<DiscordCallHandoff>();
 
 var app = builder.Build();
 
@@ -67,6 +76,7 @@ app.UseCoflnetCore();
 
 app.UseResponseCaching();
 app.UseHttpsRedirection();
+app.UseWebSockets();
 
 app.MapControllers();
 

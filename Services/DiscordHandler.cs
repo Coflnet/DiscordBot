@@ -13,8 +13,10 @@ using Coflnet.Sky.Chat.Client.Model;
 using Discord;
 using Discord.Interactions;
 using Discord.Net;
+using Discord.Audio;
 using Discord.WebSocket;
 using Newtonsoft.Json;
+using Coflnet.DiscordBot.Phone;
 
 public class DiscordHandler : BackgroundService
 {
@@ -152,6 +154,83 @@ public class DiscordHandler : BackgroundService
         {
             logger.LogError(e, "Failed to get message {messageId} from channel {channelId}", messageId, channelId);
             return null;
+        }
+    }
+
+    public bool IsUserInVoiceChannel(ulong userId, ulong channelId)
+    {
+        return client?.GetChannel(channelId) is SocketVoiceChannel channel
+            && channel.ConnectedUsers.Any(user => user.Id == userId);
+    }
+
+    public async Task<DiscordVoiceSession?> AnnounceAndMoveAsync(
+        ulong userId,
+        ulong waitingChannelId,
+        ulong privateChannelId,
+        ReadOnlyMemory<byte> noticePcm,
+        CancellationToken cancellationToken)
+    {
+        if (client?.GetChannel(waitingChannelId) is not SocketVoiceChannel waitingChannel
+            || client.GetChannel(privateChannelId) is not SocketVoiceChannel privateChannel
+            || waitingChannel.Guild.Id != privateChannel.Guild.Id
+            || privateChannel.ConnectedUsers.Any(user => user.Id != client.CurrentUser.Id)
+            || waitingChannel.ConnectedUsers.FirstOrDefault(user => user.Id == userId) is not { } target)
+            return null;
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var waitingAudio = await waitingChannel.ConnectAsync(selfDeaf: false, selfMute: false);
+        var moved = false;
+        try
+        {
+            await using (var notice = waitingAudio.CreatePCMStream(AudioApplication.Voice))
+            {
+                await notice.WriteAsync(noticePcm, cancellationToken);
+                await notice.FlushAsync(cancellationToken);
+            }
+
+            if (!waitingChannel.ConnectedUsers.Any(user => user.Id == userId))
+            {
+                await waitingAudio.StopAsync();
+                return null;
+            }
+
+            await waitingChannel.Guild.MoveAsync(target, privateChannel);
+            moved = true;
+            await waitingAudio.StopAsync();
+            var privateAudio = await privateChannel.ConnectAsync(selfDeaf: false, selfMute: false);
+            return new DiscordVoiceSession(privateAudio, client.CurrentUser.Id);
+        }
+        catch
+        {
+            try
+            {
+                await waitingAudio.StopAsync();
+            }
+            finally
+            {
+                if (moved)
+                    await waitingChannel.Guild.MoveAsync(target, waitingChannel);
+            }
+            throw;
+        }
+    }
+
+    public async Task EndCallAsync(
+        ulong userId,
+        ulong privateChannelId,
+        ulong waitingChannelId,
+        DiscordVoiceSession session)
+    {
+        try
+        {
+            await session.AudioClient.StopAsync();
+        }
+        finally
+        {
+            if (client?.GetChannel(privateChannelId) is SocketVoiceChannel privateChannel
+                && client.GetChannel(waitingChannelId) is SocketVoiceChannel waitingChannel
+                && privateChannel.ConnectedUsers.FirstOrDefault(user => user.Id == userId) is { } target)
+                await privateChannel.Guild.MoveAsync(target, waitingChannel);
         }
     }
 
