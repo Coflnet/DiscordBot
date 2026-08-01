@@ -91,6 +91,9 @@ public sealed class TwilioMediaBridge(
         finally
         {
             callCancellation.Cancel();
+            if (callSid is not null)
+                await callGate.ReleaseAsync(callSid);
+
             if (callerAudio is not null)
             {
                 try
@@ -113,9 +116,6 @@ public sealed class TwilioMediaBridge(
                     logger.LogDebug(exception, "Could not cleanly disconnect Discord voice");
                 }
             }
-            if (callSid is not null)
-                await callGate.ReleaseAsync(callSid);
-
             if (webSocket.State is WebSocketState.Open or WebSocketState.CloseReceived)
                 await CloseAsync(webSocket, WebSocketCloseStatus.NormalClosure, "Call ended", CancellationToken.None);
         }
