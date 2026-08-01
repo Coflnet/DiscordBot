@@ -16,6 +16,7 @@ public sealed class TwilioMediaBridge(
     DiscordCallHandoff handoff,
     ILogger<TwilioMediaBridge> logger)
 {
+    private const int RealtimeBufferMilliseconds = 100;
     private readonly TwilioVoiceOptions options = options.Value;
 
     public async Task HandleAsync(HttpContext context)
@@ -50,14 +51,30 @@ public sealed class TwilioMediaBridge(
                 return;
             }
 
-            session = await handoff.PrepareAsync(language, callCancellation.Token);
+            var preparation = handoff.PrepareAsync(language, callCancellation.Token);
+            // Do not replay audio collected while Discord plays the notice and switches channels.
+            while (!preparation.IsCompleted)
+            {
+                var message = await ReceiveAsync(webSocket, callCancellation.Token);
+                if (message is null || message.Event == "stop")
+                {
+                    callCancellation.Cancel();
+                    break;
+                }
+            }
+
+            session = await preparation;
+            if (callCancellation.IsCancellationRequested)
+                return;
             if (session is null)
             {
                 await CloseAsync(webSocket, WebSocketCloseStatus.NormalClosure, "Unavailable", context.RequestAborted);
                 return;
             }
 
-            callerAudio = session.AudioClient.CreatePCMStream(AudioApplication.Voice);
+            callerAudio = session.AudioClient.CreatePCMStream(
+                AudioApplication.Voice,
+                bufferMillis: RealtimeBufferMilliseconds);
             await BridgeAsync(webSocket, start.Start!.StreamSid, session, callerAudio, callCancellation);
         }
         catch (OperationCanceledException) when (callCancellation.IsCancellationRequested)
@@ -78,7 +95,6 @@ public sealed class TwilioMediaBridge(
             {
                 try
                 {
-                    await callerAudio.FlushAsync(CancellationToken.None);
                     await callerAudio.DisposeAsync();
                 }
                 catch (Exception exception)

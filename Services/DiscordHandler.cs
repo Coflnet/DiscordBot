@@ -20,6 +20,7 @@ using Coflnet.DiscordBot.Phone;
 
 public class DiscordHandler : BackgroundService
 {
+    private const int RealtimeVoiceBufferMilliseconds = 100;
     private readonly ILogger<DiscordHandler> logger;
     private readonly IConfiguration _config;
     private DiscordSocketClient? client;
@@ -183,7 +184,9 @@ public class DiscordHandler : BackgroundService
         var moved = false;
         try
         {
-            await using (var notice = waitingAudio.CreatePCMStream(AudioApplication.Voice))
+            await using (var notice = waitingAudio.CreatePCMStream(
+                AudioApplication.Voice,
+                bufferMillis: RealtimeVoiceBufferMilliseconds))
             {
                 await notice.WriteAsync(noticePcm, cancellationToken);
                 await notice.FlushAsync(cancellationToken);
@@ -191,13 +194,13 @@ public class DiscordHandler : BackgroundService
 
             if (!waitingChannel.ConnectedUsers.Any(user => user.Id == userId))
             {
-                await waitingAudio.StopAsync();
+                await waitingChannel.DisconnectAsync();
                 return null;
             }
 
             await waitingChannel.Guild.MoveAsync(target, privateChannel);
             moved = true;
-            await waitingAudio.StopAsync();
+            await waitingChannel.DisconnectAsync();
             var privateAudio = await privateChannel.ConnectAsync(selfDeaf: false, selfMute: false);
             return new DiscordVoiceSession(privateAudio, client.CurrentUser.Id);
         }
@@ -205,7 +208,7 @@ public class DiscordHandler : BackgroundService
         {
             try
             {
-                await waitingAudio.StopAsync();
+                await waitingChannel.DisconnectAsync();
             }
             finally
             {
@@ -222,16 +225,20 @@ public class DiscordHandler : BackgroundService
         ulong waitingChannelId,
         DiscordVoiceSession session)
     {
+        var privateChannel = client?.GetChannel(privateChannelId) as SocketVoiceChannel;
+        var waitingChannel = client?.GetChannel(waitingChannelId) as SocketVoiceChannel;
         try
         {
-            await session.AudioClient.StopAsync();
+            if (privateChannel?.ConnectedUsers.FirstOrDefault(user => user.Id == userId) is { } target
+                && waitingChannel is not null)
+                await privateChannel.Guild.MoveAsync(target, waitingChannel);
         }
         finally
         {
-            if (client?.GetChannel(privateChannelId) is SocketVoiceChannel privateChannel
-                && client.GetChannel(waitingChannelId) is SocketVoiceChannel waitingChannel
-                && privateChannel.ConnectedUsers.FirstOrDefault(user => user.Id == userId) is { } target)
-                await privateChannel.Guild.MoveAsync(target, waitingChannel);
+            if (privateChannel is not null)
+                await privateChannel.DisconnectAsync();
+            else
+                await session.AudioClient.StopAsync();
         }
     }
 
