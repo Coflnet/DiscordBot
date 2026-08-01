@@ -17,6 +17,7 @@ public sealed class TwilioMediaBridge(
     ILogger<TwilioMediaBridge> logger)
 {
     private const int RealtimeBufferMilliseconds = 100;
+    private static readonly TimeSpan MediaInactivityTimeout = TimeSpan.FromSeconds(2);
     private readonly TwilioVoiceOptions options = options.Value;
 
     public async Task HandleAsync(HttpContext context)
@@ -134,13 +135,13 @@ public sealed class TwilioMediaBridge(
             SingleReader = true,
             SingleWriter = false
         });
-        var pumps = new ConcurrentDictionary<ulong, Task>();
+        var pumps = new ConcurrentDictionary<AudioInStream, Task>();
 
         Task StartPump(ulong userId, AudioInStream stream)
         {
             if (userId == session.BotUserId)
                 return Task.CompletedTask;
-            return pumps.GetOrAdd(userId, _ => PumpDiscordUserAsync(
+            return pumps.GetOrAdd(stream, _ => PumpDiscordUserAsync(
                 userId,
                 stream,
                 discordFrames.Writer,
@@ -164,7 +165,18 @@ public sealed class TwilioMediaBridge(
         {
             while (!cancellation.IsCancellationRequested && webSocket.State == WebSocketState.Open)
             {
-                var message = await ReceiveAsync(webSocket, cancellation.Token);
+                using var receiveCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+                receiveCancellation.CancelAfter(MediaInactivityTimeout);
+                TwilioStreamMessage? message;
+                try
+                {
+                    message = await ReceiveAsync(webSocket, receiveCancellation.Token);
+                }
+                catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
+                {
+                    logger.LogInformation("Twilio media stream became inactive; ending the call");
+                    break;
+                }
                 if (message is null || message.Event == "stop")
                     break;
                 if (message.Event != "media" || string.IsNullOrWhiteSpace(message.Media?.Payload))
@@ -224,7 +236,7 @@ public sealed class TwilioMediaBridge(
         }
     }
 
-    private static async Task MixAndSendAsync(
+    private async Task MixAndSendAsync(
         WebSocket webSocket,
         string streamSid,
         ChannelReader<UserFrame> reader,
@@ -232,6 +244,7 @@ public sealed class TwilioMediaBridge(
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(20));
         var latest = new Dictionary<ulong, short[]>();
+        var started = false;
         while (await timer.WaitForNextTickAsync(cancellationToken))
         {
             latest.Clear();
@@ -257,6 +270,11 @@ public sealed class TwilioMediaBridge(
                 media = new { payload = Convert.ToBase64String(PcmuCodec.Encode(mixed)) }
             });
             await webSocket.SendAsync(message, WebSocketMessageType.Text, true, cancellationToken);
+            if (!started)
+            {
+                logger.LogInformation("Started forwarding Discord audio to Twilio");
+                started = true;
+            }
         }
     }
 
