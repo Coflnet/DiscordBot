@@ -3,7 +3,9 @@ using Twilio.Security;
 
 namespace Coflnet.DiscordBot.Phone;
 
-public sealed class TwilioRequestValidator(IOptions<TwilioVoiceOptions> options)
+public sealed class TwilioRequestValidator(
+    IOptions<TwilioVoiceOptions> options,
+    ILogger<TwilioRequestValidator> logger)
 {
     private readonly TwilioVoiceOptions options = options.Value;
 
@@ -26,10 +28,46 @@ public sealed class TwilioRequestValidator(IOptions<TwilioVoiceOptions> options)
     {
         if (!request.Headers.TryGetValue("X-Twilio-Signature", out var signature)
             || string.IsNullOrWhiteSpace(signature))
+        {
+            logger.LogWarning("Twilio request is missing its signature header");
             return false;
+        }
 
-        return new RequestValidator(options.AuthToken)
-            .Validate(url, fields.ToDictionary(), signature.ToString());
+        var validator = new RequestValidator(options.AuthToken);
+        var parameters = fields.ToDictionary();
+        if (validator.Validate(url, parameters, signature.ToString()))
+            return true;
+
+        var requestUrl = $"{request.Scheme}://{request.Host}{request.PathBase}{request.Path}{request.QueryString}";
+        var requestUrlDiffers = !string.Equals(url, requestUrl, StringComparison.Ordinal);
+        var requestUrlMatches = requestUrlDiffers
+            && validator.Validate(requestUrl, parameters, signature.ToString());
+
+        var decodedCallTokenMatches = false;
+        if (fields.TryGetValue("CallToken", out var callToken))
+        {
+            var decodedCallToken = System.Net.WebUtility.UrlDecode(callToken);
+            if (!string.Equals(callToken, decodedCallToken, StringComparison.Ordinal))
+            {
+                parameters["CallToken"] = decodedCallToken;
+                decodedCallTokenMatches = validator.Validate(url, parameters, signature.ToString());
+            }
+        }
+
+        parameters.Remove("CallToken");
+        var omittedCallTokenMatches = parameters.Count != fields.Count
+            && validator.Validate(url, parameters, signature.ToString());
+        logger.LogWarning(
+            "Twilio signature validation failed for {Path} with {FieldCount} form fields. "
+            + "Request URL differs: {RequestUrlDiffers}; request URL matches: {RequestUrlMatches}; "
+            + "decoded CallToken matches: {DecodedCallTokenMatches}; omitted CallToken matches: {OmittedCallTokenMatches}",
+            request.Path.Value,
+            fields.Count,
+            requestUrlDiffers,
+            requestUrlMatches,
+            decodedCallTokenMatches,
+            omittedCallTokenMatches);
+        return false;
     }
 
     private string WebhookUrl(HttpRequest request)
