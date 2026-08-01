@@ -105,7 +105,8 @@ public class DiscordHandler : BackgroundService
             // which requires the privileged GuildMembers intent (not enabled) so it throws,
             // and stalls guild availability - causing "Unknown Channel" races on startup.
             // The code never enumerates the member cache, so keep it off.
-            AlwaysDownloadUsers = false
+            AlwaysDownloadUsers = false,
+            EnableVoiceDaveEncryption = true
         });
         interactionService = new InteractionService(client.Rest);
         interactionService.Log += Log;

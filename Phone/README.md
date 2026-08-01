@@ -72,8 +72,10 @@ proxy must allow WebSocket upgrades on `/api/twilio/voice/media` and preserve
 the request path. Do not rewrite the public URL: Twilio signature validation
 uses the exact configured URL.
 
-The production image copies only the native Opus and libsodium libraries
-needed by Discord.Net voice into the existing chiseled runtime image.
+The production image copies the native Opus, libsodium, and libdave libraries
+needed by Discord.Net voice into the existing chiseled runtime image. DAVE
+encrypts the Discord voice hop, but the bot terminates it to relay Twilio, so
+the phone-to-Discord-user path is not end-to-end encrypted.
 
 ## Discord permissions and test
 
