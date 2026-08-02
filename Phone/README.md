@@ -34,6 +34,8 @@ bounded 500 ms queue absorbs short network bursts without allowing latency to
 grow indefinitely; other Discord users' audio is never placed on the phone
 stream. Hangup cleanup moves the target back before disposing audio streams or
 releasing Redis state so slow secondary cleanup cannot delay the move.
+On the first Discord gateway-ready event after a process start, the bot also
+runs this return/disconnect cleanup and removes any stale active-call lease.
 
 Calls that cannot connect because the target is unavailable or another call is
 active are retained in Redis for up to 30 days (maximum 50 entries). The bot

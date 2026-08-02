@@ -29,6 +29,7 @@ public class DiscordHandler : BackgroundService
     private InteractionService? interactionService;
     private readonly SemaphoreSlim interactionInitializationLock = new(1, 1);
     private bool interactionServiceInitialized;
+    private int phoneStateRecovered;
     private IServiceProvider _serviceProvider;
     private ChatService chatService;
     private HashSet<string> ChatWebhooks = new();
@@ -274,7 +275,7 @@ public class DiscordHandler : BackgroundService
         ulong userId,
         ulong privateChannelId,
         ulong waitingChannelId,
-        DiscordVoiceSession session)
+        DiscordVoiceSession? session)
     {
         var privateChannel = client?.GetChannel(privateChannelId) as SocketVoiceChannel;
         var waitingChannel = client?.GetChannel(waitingChannelId) as SocketVoiceChannel;
@@ -291,7 +292,7 @@ public class DiscordHandler : BackgroundService
         {
             if (privateChannel is not null)
                 await privateChannel.DisconnectAsync();
-            else
+            else if (session is not null)
                 await session.AudioClient.StopAsync();
         }
     }
@@ -378,6 +379,7 @@ public class DiscordHandler : BackgroundService
         {
             logger.LogInformation("Discord client ready, authenticated as {username}#{discriminator} (id {botId})",
                 client!.CurrentUser?.Username, client.CurrentUser?.Discriminator, client.CurrentUser?.Id);
+            await RecoverPhoneStateAsync();
             await EnsureInteractionServiceInitialized();
             var guildId = ulong.Parse(_config["GUILD_ID"] ?? throw new Exception("Guild ID not set"));
             var guild = client!.GetGuild(guildId);
@@ -430,6 +432,35 @@ public class DiscordHandler : BackgroundService
             logger.LogError(exception, "Error during Discord ready initialization - bot may not be fully ready");
         }
         logger.LogInformation("Discord bot ready");
+    }
+
+    private async Task RecoverPhoneStateAsync()
+    {
+        if (Interlocked.Exchange(ref phoneStateRecovered, 1) != 0)
+            return;
+
+        var options = _serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<TwilioVoiceOptions>>().Value;
+        if (!options.Enabled)
+            return;
+
+        try
+        {
+            await EndCallAsync(options.TargetUserId, options.PrivateVoiceChannelId, options.VoiceChannelId, null);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not recover Discord phone-call state after startup");
+        }
+
+        try
+        {
+            await _serviceProvider.GetRequiredService<TwilioCallGate>().ResetActiveCallAsync();
+            logger.LogInformation("Reset phone-call state after startup");
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not reset the active phone-call lease after startup");
+        }
     }
 
     private async Task EnsureInteractionServiceInitialized()

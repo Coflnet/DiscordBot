@@ -107,6 +107,8 @@ public sealed class TwilioCallGate(
         });
     }
 
+    public Task ResetActiveCallAsync() => database.KeyDeleteAsync(ActiveCallKey);
+
     public async Task RecordMissedCallAsync(string caller, MissedCallReason reason)
     {
         try
