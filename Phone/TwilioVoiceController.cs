@@ -62,11 +62,34 @@ public sealed class TwilioVoiceController(
         if (!await callGate.TryReserveAsync(callSid))
             return await VoicemailAsync(form["From"].ToString(), language, MissedCallReason.LineBusy);
 
+        var afterUrl = $"{options.PublicBaseUrl.TrimEnd('/')}/api/twilio/voice/after"
+            + $"?language={TwilioVoiceOptions.LanguageCode(language)}";
         return Twiml(TwilioVoiceTwiml.Connect(
             options.MediaStreamUrl,
             callSid,
             callGate.CreateStreamToken(callSid),
-            TwilioVoiceOptions.LanguageCode(language)));
+            afterUrl,
+            language));
+    }
+
+    [HttpPost("after")]
+    public async Task<IActionResult> AfterStream()
+    {
+        if (!options.Enabled)
+            return NotFound();
+        if (!await requestValidator.IsValidWebhookAsync(Request))
+            return StatusCode(StatusCodes.Status403Forbidden);
+        if (!TwilioVoiceOptions.TryParseLanguageCode(Request.Query["language"], out var language))
+            return StatusCode(StatusCodes.Status403Forbidden);
+
+        var form = await Request.ReadFormAsync(HttpContext.RequestAborted);
+        if (!await callGate.ConsumeHandoffUnavailableAsync(form["CallSid"].ToString()))
+            return Twiml(TwilioVoiceTwiml.Hangup());
+
+        return await VoicemailAsync(
+            form["From"].ToString(),
+            language,
+            MissedCallReason.TargetUnavailable);
     }
 
     [HttpPost("voicemail/finished")]

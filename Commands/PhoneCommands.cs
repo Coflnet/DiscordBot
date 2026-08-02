@@ -207,12 +207,14 @@ public sealed class PhoneCommands(
             session = await handoff.PrepareAsync(language, CancellationToken.None);
             if (session is null)
             {
-                await FollowupAsync("The configured target user is not in the phone waiting room.", ephemeral: true);
+                await FollowupAsync(
+                    "The target left, the private channel became busy, or two seconds of microphone audio were not received within 15 seconds.",
+                    ephemeral: true);
                 return;
             }
 
             await FollowupAsync(
-                "Disclosure played and the private-channel move succeeded. The test will reset in five seconds.",
+                "Disclosure acknowledged and the private-channel move succeeded. The test will reset in five seconds.",
                 ephemeral: true);
             await Task.Delay(TimeSpan.FromSeconds(5));
         }

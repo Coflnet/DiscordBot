@@ -25,17 +25,20 @@ public class TwilioVoiceTwimlTests
     }
 
     [Test]
-    public void StreamCarriesSignedParametersWithoutQueryString()
+    public void StreamAnnouncesConnectionAndCarriesSignedParametersWithoutQueryString()
     {
         var response = XDocument.Parse(TwilioVoiceTwiml.Connect(
             "wss://bot.example/api/twilio/voice/media",
             "CA123",
             "signed-token",
-            "de"));
+            "https://bot.example/api/twilio/voice/after?language=de",
+            PhoneLanguage.German));
         var stream = response.Descendants("Stream").Single();
 
         Assert.Multiple(() =>
         {
+            Assert.That((string?)response.Root!.Element("Say")?.Attribute("language"), Is.EqualTo("de-DE"));
+            Assert.That(response.Root.Element("Say")?.Value, Does.Contain("verbunden"));
             Assert.That((string?)stream.Attribute("url"), Does.Not.Contain("?"));
             Assert.That(
                 stream.Elements("Parameter").Single(node => (string?)node.Attribute("name") == "CallSid")
@@ -49,6 +52,8 @@ public class TwilioVoiceTwimlTests
                 stream.Elements("Parameter").Single(node => (string?)node.Attribute("name") == "Language")
                     .Attribute("value")?.Value,
                 Is.EqualTo("de"));
+            Assert.That(response.Root.Elements().Last().Name.LocalName, Is.EqualTo("Redirect"));
+            Assert.That(response.Root.Elements().Last().Value, Does.EndWith("?language=de"));
         });
     }
 

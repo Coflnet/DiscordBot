@@ -59,8 +59,19 @@ public static class TwilioVoiceTwiml
                 new XElement("Play", audioUrl)),
             new XElement("Hangup"));
 
-    public static string Connect(string streamUrl, string callSid, string token, string language)
+    public static string Connect(
+        string streamUrl,
+        string callSid,
+        string token,
+        string afterUrl,
+        PhoneLanguage language)
         => Document(
+            new XElement(
+                "Say",
+                new XAttribute("language", language == PhoneLanguage.German ? "de-DE" : "en-GB"),
+                language == PhoneLanguage.German
+                    ? "Einen Moment bitte. Ihr Anruf wird jetzt verbunden."
+                    : "One moment please. Your call is now being connected."),
             new XElement(
                 "Connect",
                 new XElement(
@@ -68,8 +79,11 @@ public static class TwilioVoiceTwiml
                     new XAttribute("url", streamUrl),
                     new XElement("Parameter", new XAttribute("name", "CallSid"), new XAttribute("value", callSid)),
                     new XElement("Parameter", new XAttribute("name", "Token"), new XAttribute("value", token)),
-                    new XElement("Parameter", new XAttribute("name", "Language"), new XAttribute("value", language)))),
-            new XElement("Hangup"));
+                    new XElement(
+                        "Parameter",
+                        new XAttribute("name", "Language"),
+                        new XAttribute("value", TwilioVoiceOptions.LanguageCode(language))))),
+            new XElement("Redirect", new XAttribute("method", "POST"), afterUrl));
 
     public static string Hangup() => Document(new XElement("Hangup"));
 

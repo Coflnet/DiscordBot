@@ -18,12 +18,15 @@ The inbound flow is:
 5. Play the localized anti-bot prompt and require DTMF `1`.
 6. Recheck presence, reserve the single available bridge, and start a
    bidirectional Twilio Media Stream.
-7. Join the waiting room and play a localized disclosure to the target and
-   everyone else currently there.
-8. Move the target and bot to the private call channel.
-9. Bridge 8 kHz G.711 μ-law audio to
+7. Tell the caller that the call is being connected, join the waiting room,
+   and play a localized disclosure to the target and everyone else there.
+8. Require two seconds of microphone audio from the target within 15 seconds.
+   If it is not received, play the caller's unavailable message and offer
+   voicemail.
+9. Move the target and bot to the private call channel.
+10. Bridge 8 kHz G.711 μ-law audio to
    Discord's 48 kHz stereo PCM in both directions.
-10. End the call when the caller disconnects, the target leaves, or the
+11. End the call when the caller disconnects, the target leaves, or the
     configured duration expires, then return the target to the waiting room.
 
 Calls that cannot connect because the target is unavailable or another call is

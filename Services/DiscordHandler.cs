@@ -21,6 +21,8 @@ using Coflnet.DiscordBot.Phone;
 public class DiscordHandler : BackgroundService
 {
     private const int RealtimeVoiceBufferMilliseconds = 100;
+    private const int PhoneAcknowledgementPcmBytes = 48000 * 2 * sizeof(short) * 2;
+    private static readonly TimeSpan PhoneAcknowledgementTimeout = TimeSpan.FromSeconds(15);
     private readonly ILogger<DiscordHandler> logger;
     private readonly IConfiguration _config;
     private DiscordSocketClient? client;
@@ -192,8 +194,12 @@ public class DiscordHandler : BackgroundService
                 await notice.FlushAsync(cancellationToken);
             }
 
-            if (!waitingChannel.ConnectedUsers.Any(user => user.Id == userId))
+            logger.LogInformation("Waiting for phone-call microphone acknowledgement from Discord user {userId}", userId);
+            if (!await WaitForMicrophoneInputAsync(waitingAudio, userId, cancellationToken)
+                || !waitingChannel.ConnectedUsers.Any(user => user.Id == userId)
+                || privateChannel.ConnectedUsers.Any(user => user.Id != client.CurrentUser.Id))
             {
+                logger.LogInformation("Phone-call handoff was not accepted by Discord user {userId}", userId);
                 await waitingChannel.DisconnectAsync();
                 return null;
             }
@@ -216,6 +222,51 @@ public class DiscordHandler : BackgroundService
                     await waitingChannel.Guild.MoveAsync(target, waitingChannel);
             }
             throw;
+        }
+    }
+
+    private static async Task<bool> WaitForMicrophoneInputAsync(
+        IAudioClient audioClient,
+        ulong userId,
+        CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(PhoneAcknowledgementTimeout);
+        var streamReady = new TaskCompletionSource<AudioInStream>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        Task StreamCreated(ulong streamUserId, AudioInStream stream)
+        {
+            if (streamUserId == userId)
+                streamReady.TrySetResult(stream);
+            return Task.CompletedTask;
+        }
+
+        audioClient.StreamCreated += StreamCreated;
+        try
+        {
+            foreach (var stream in audioClient.GetStreams())
+                if (stream.Key == userId)
+                    streamReady.TrySetResult(stream.Value);
+
+            var input = await streamReady.Task.WaitAsync(timeout.Token);
+            var buffer = new byte[3840];
+            var received = 0;
+            while (received < PhoneAcknowledgementPcmBytes)
+            {
+                var read = await input.ReadAsync(buffer, timeout.Token);
+                if (read == 0)
+                    return false;
+                received += read;
+            }
+            return true;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        finally
+        {
+            audioClient.StreamCreated -= StreamCreated;
         }
     }
 

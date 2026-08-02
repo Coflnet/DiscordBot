@@ -28,6 +28,7 @@ public sealed class TwilioCallGate(
 {
     private const string ActiveCallKey = "discordbot:phone:active";
     private const string MissedCallsKey = "discordbot:phone:missed";
+    private const string HandoffUnavailableKeyPrefix = "discordbot:phone:handoff-unavailable:";
     private const int MaxStoredMissedCalls = 50;
     private static readonly TimeSpan MissedCallRetention = TimeSpan.FromDays(30);
     private static readonly LuaScript RateLimitScript = LuaScript.Prepare(
@@ -138,6 +139,19 @@ public sealed class TwilioCallGate(
 
     public Task ClearMissedCallsAsync() => database.KeyDeleteAsync(MissedCallsKey);
 
+    public async Task MarkHandoffUnavailableAsync(string callSid)
+    {
+        if (IsCallSid(callSid))
+            await database.StringSetAsync(
+                HandoffUnavailableKeyPrefix + callSid,
+                "1",
+                TimeSpan.FromMinutes(2));
+    }
+
+    public async Task<bool> ConsumeHandoffUnavailableAsync(string callSid)
+        => IsCallSid(callSid)
+            && await database.StringGetDeleteAsync(HandoffUnavailableKeyPrefix + callSid) == "1";
+
     public string CallerReference(string caller) => HashCaller(caller)[..8];
 
     public string CreateStreamToken(string callSid)
@@ -166,6 +180,11 @@ public sealed class TwilioCallGate(
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(options.CallerHashKey));
         return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes($"caller:{caller}")));
     }
+
+    private static bool IsCallSid(string value)
+        => value.Length == 34
+            && value.StartsWith("CA", StringComparison.Ordinal)
+            && value.AsSpan(2).ToString().All(char.IsAsciiHexDigit);
 
     private static MissedPhoneCall? ParseMissedCall(RedisValue entry)
     {

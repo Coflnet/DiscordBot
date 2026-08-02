@@ -69,6 +69,7 @@ public sealed class TwilioMediaBridge(
                 return;
             if (session is null)
             {
+                await callGate.MarkHandoffUnavailableAsync(callSid);
                 await CloseAsync(webSocket, WebSocketCloseStatus.NormalClosure, "Unavailable", context.RequestAborted);
                 return;
             }
@@ -87,6 +88,8 @@ public sealed class TwilioMediaBridge(
         }
         catch (Exception exception)
         {
+            if (callSid is not null && session is null)
+                await callGate.MarkHandoffUnavailableAsync(callSid);
             logger.LogError(exception, "Twilio/Discord voice bridge failed");
         }
         finally
