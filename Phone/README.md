@@ -16,11 +16,12 @@ The inbound flow is:
 4. If the target user is absent, play the localized unavailable message,
    disclose recording, and offer a voicemail.
 5. Play the localized anti-bot prompt and require DTMF `1`.
-6. Recheck presence, reserve the single available bridge, and start a
-   bidirectional Twilio Media Stream.
-7. Tell the caller that the call is being connected, join the waiting room,
-   and play a localized disclosure to the target and everyone else there.
-8. Require two seconds of microphone audio from the target within 15 seconds.
+6. Recheck presence, reserve the single available bridge, and start the Discord
+   handoff while Twilio tells the caller that the call is being connected.
+7. Start a bidirectional Twilio Media Stream when the caller message finishes;
+   the Discord handoff continues concurrently if it is not ready yet.
+8. Join the waiting room, play a localized disclosure to everyone there, and
+   require two seconds of microphone audio from the target within 15 seconds.
    If it is not received, play the caller's unavailable message and offer
    voicemail.
 9. Move the target and bot to the private call channel.

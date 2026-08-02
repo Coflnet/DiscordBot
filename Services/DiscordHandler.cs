@@ -182,6 +182,13 @@ public class DiscordHandler : BackgroundService
             || waitingChannel.ConnectedUsers.FirstOrDefault(user => user.Id == userId) is not { } target)
             return null;
 
+        var botPermissions = privateChannel.Guild.CurrentUser.GetPermissions(privateChannel);
+        if (!botPermissions.Connect || !botPermissions.Speak)
+        {
+            logger.LogError("The Discord bot needs Connect and Speak permissions in the private phone channel");
+            return null;
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         var waitingAudio = await waitingChannel.ConnectAsync(selfDeaf: false, selfMute: false);
         var moved = false;

@@ -18,7 +18,24 @@ public sealed class TwilioMediaBridge(
 {
     private const int RealtimeBufferMilliseconds = 100;
     private static readonly TimeSpan MediaInactivityTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan PendingHandoffTimeout = TimeSpan.FromSeconds(30);
     private readonly TwilioVoiceOptions options = options.Value;
+    private readonly ConcurrentDictionary<string, PendingHandoff> pendingHandoffs = new();
+
+    public void BeginHandoff(string callSid, PhoneLanguage language)
+    {
+        var cancellation = new CancellationTokenSource();
+        var pending = new PendingHandoff(
+            cancellation,
+            handoff.PrepareAsync(language, cancellation.Token));
+        if (!pendingHandoffs.TryAdd(callSid, pending))
+        {
+            cancellation.Cancel();
+            cancellation.Dispose();
+            return;
+        }
+        _ = ExpireHandoffAsync(callSid, pending);
+    }
 
     public async Task HandleAsync(HttpContext context)
     {
@@ -52,7 +69,7 @@ public sealed class TwilioMediaBridge(
                 return;
             }
 
-            var preparation = handoff.PrepareAsync(language, callCancellation.Token);
+            var preparation = ClaimHandoffAsync(callSid, language, callCancellation.Token);
             // Do not replay audio collected while Discord plays the notice and switches channels.
             while (!preparation.IsCompleted)
             {
@@ -171,6 +188,7 @@ public sealed class TwilioMediaBridge(
 
         var outbound = SendDiscordAudioAsync(webSocket, streamSid, discordFrames.Reader, cancellation.Token);
         var presence = MonitorPresenceAsync(cancellation);
+        var callerAudioStarted = false;
 
         try
         {
@@ -203,6 +221,11 @@ public sealed class TwilioMediaBridge(
                     throw new WebSocketException("Twilio sent an invalid media payload");
                 }
                 await callerAudio.WriteAsync(PcmuCodec.DecodeToDiscordPcm(payload), cancellation.Token);
+                if (!callerAudioStarted)
+                {
+                    logger.LogInformation("Started forwarding Twilio audio to Discord");
+                    callerAudioStarted = true;
+                }
             }
         }
         finally
@@ -288,6 +311,50 @@ public sealed class TwilioMediaBridge(
         }
     }
 
+    private async Task<DiscordVoiceSession?> ClaimHandoffAsync(
+        string callSid,
+        PhoneLanguage language,
+        CancellationToken cancellationToken)
+    {
+        if (!pendingHandoffs.TryRemove(callSid, out var pending))
+            return await handoff.PrepareAsync(language, cancellationToken);
+
+        using var registration = cancellationToken.Register(pending.Cancellation.Cancel);
+        try
+        {
+            return await pending.Preparation;
+        }
+        finally
+        {
+            pending.Cancellation.Dispose();
+        }
+    }
+
+    private async Task ExpireHandoffAsync(string callSid, PendingHandoff pending)
+    {
+        await Task.Delay(PendingHandoffTimeout);
+        if (!pendingHandoffs.TryRemove(callSid, out _))
+            return;
+
+        pending.Cancellation.Cancel();
+        try
+        {
+            if (await pending.Preparation is { } session)
+                await handoff.EndAsync(session);
+        }
+        catch (OperationCanceledException) when (pending.Cancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not clean up an unclaimed phone handoff");
+        }
+        finally
+        {
+            pending.Cancellation.Dispose();
+        }
+    }
+
     private static async Task<TwilioStreamMessage?> ReceiveAsync(
         WebSocket webSocket,
         CancellationToken cancellationToken)
@@ -369,4 +436,8 @@ public sealed class TwilioMediaBridge(
         [JsonPropertyName("payload")]
         public string? Payload { get; init; }
     }
+
+    private sealed record PendingHandoff(
+        CancellationTokenSource Cancellation,
+        Task<DiscordVoiceSession?> Preparation);
 }

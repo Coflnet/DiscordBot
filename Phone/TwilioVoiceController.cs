@@ -62,6 +62,7 @@ public sealed class TwilioVoiceController(
         if (!await callGate.TryReserveAsync(callSid))
             return await VoicemailAsync(form["From"].ToString(), language, MissedCallReason.LineBusy);
 
+        mediaBridge.BeginHandoff(callSid, language);
         var afterUrl = $"{options.PublicBaseUrl.TrimEnd('/')}/api/twilio/voice/after"
             + $"?language={TwilioVoiceOptions.LanguageCode(language)}";
         return Twiml(TwilioVoiceTwiml.Connect(
