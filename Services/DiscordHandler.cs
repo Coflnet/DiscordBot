@@ -280,9 +280,12 @@ public class DiscordHandler : BackgroundService
         var waitingChannel = client?.GetChannel(waitingChannelId) as SocketVoiceChannel;
         try
         {
-            if (privateChannel?.ConnectedUsers.FirstOrDefault(user => user.Id == userId) is { } target
-                && waitingChannel is not null)
-                await privateChannel.Guild.MoveAsync(target, waitingChannel);
+            var guild = privateChannel?.Guild ?? waitingChannel?.Guild;
+            if (guild?.GetUser(userId) is { } target && waitingChannel is not null)
+            {
+                logger.LogInformation("Returning Discord user {userId} to the phone waiting room", userId);
+                await guild.MoveAsync(target, waitingChannel);
+            }
         }
         finally
         {

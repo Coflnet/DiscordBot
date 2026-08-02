@@ -29,6 +29,12 @@ The inbound flow is:
 11. End the call when the caller disconnects, the target leaves, or the
     configured duration expires, then return the target to the waiting room.
 
+The bridge forwards each 20 ms target-user audio frame to Twilio in order. A
+bounded 500 ms queue absorbs short network bursts without allowing latency to
+grow indefinitely; other Discord users' audio is never placed on the phone
+stream. Hangup cleanup moves the target back before disposing audio streams or
+releasing Redis state so slow secondary cleanup cannot delay the move.
+
 Calls that cannot connect because the target is unavailable or another call is
 active are retained in Redis for up to 30 days (maximum 50 entries). The bot
 stores only the time, reason, and a short HMAC-derived caller reference. An
