@@ -700,8 +700,8 @@ public class DiscordHandler : BackgroundService
         // #6: Nitro scam link detection (ported from Node.js bot)
         if (NitroRegex.IsMatch(msg.Content))
         {
-            logger.LogInformation("Deleted nitro scam link message {messageId} from {userId} in {channelId}",
-                msg.Id, msg.Author.Id, msg.Channel.Id);
+            logger.LogInformation("Deleted nitro scam link message {messageId} from {userId} in {channelId}: {messageContent}",
+                msg.Id, msg.Author.Id, msg.Channel.Id, msg.Content);
             await msg.DeleteAsync();
             return;
         }
