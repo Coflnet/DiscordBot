@@ -51,8 +51,10 @@ public class DiscordHandler : BackgroundService
 
     // Nitro scam link regex (ported from Node.js bot)
     private static readonly Regex NitroRegex = new(
-        @"((.*http.*)(.*nitro.*))|((.*nitro.*)(.*http.*))|((.*http.*)(.*gift.*))|((.*gift.*)(.*http.*))",
+        @"((.*http.*)(.*nitro.*))|((.*nitro.*)(.*http.*))|((.*http.*)(.* gift.*))|((.* gift.*)(.*http.*))",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    internal static bool IsNitroScamLink(string content) => NitroRegex.IsMatch(content);
 
     // One-word spam tracking per user (ported from Node.js bot)
     private readonly ConcurrentDictionary<ulong, DateTime> _oneWordMessageTimes = new();
@@ -698,7 +700,7 @@ public class DiscordHandler : BackgroundService
         }
         
         // #6: Nitro scam link detection (ported from Node.js bot)
-        if (NitroRegex.IsMatch(msg.Content))
+        if (IsNitroScamLink(msg.Content))
         {
             logger.LogInformation("Deleted nitro scam link message {messageId} from {userId} in {channelId}: {messageContent}",
                 msg.Id, msg.Author.Id, msg.Channel.Id, msg.Content);
