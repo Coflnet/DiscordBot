@@ -13,9 +13,12 @@ public class GithubCommands : InteractionModuleBase
     ILogger<GithubCommands> logger;
     const int MaxPublicIssueImages = 3;
     const int MaxPublicIssueImageBytes = 10 << 20;
+    const int MaxIssueSourceMessages = 25;
     static readonly Regex DiscordAttachmentPath = new(@"^/attachments/[0-9]{17,20}/[0-9]{17,20}/[^/?#\x00-\x20]{1,768}$", RegexOptions.CultureInvariant);
     static readonly Regex DiscordAttachmentQuery = new(@"^\?ex=[0-9a-f]{8}&is=[0-9a-f]{8}&hm=[0-9a-f]{64}$", RegexOptions.CultureInvariant);
+    static readonly Regex DiscordMessageLink = new(@"^https://discord\.com/channels/(?<guild>@me|[0-9]{17,20})/(?<channel>[0-9]{17,20})/(?<message>[0-9]{17,20})$", RegexOptions.CultureInvariant);
     static readonly HashSet<string> PublicIssueImageTypes = new(StringComparer.OrdinalIgnoreCase) { "image/png", "image/jpeg", "image/gif" };
+    static readonly HashSet<string> PublicIssueImageRepositories = new(StringComparer.OrdinalIgnoreCase) { "SkyApi", "SkyModCommands", "SkySniper" };
 
     public GithubCommands(GitHubClient github, Octokit.GraphQL.Connection connection, ILogger<GithubCommands> logger)
     {
@@ -29,7 +32,8 @@ public class GithubCommands : InteractionModuleBase
     [CommandContextType(InteractionContextType.PrivateChannel, InteractionContextType.BotDm, InteractionContextType.Guild)]
     public async Task Issue([Summary("title", "Title of the issue")] string title,
         [Summary("repo", "Repository to create the issue in"), Autocomplete<GitRepoAutocompleteHandler>()] string repo,
-        [Summary("body", "Body of the issue")] string body = "")
+        [Summary("body", "Body of the issue")] string body = "",
+        [Summary("message", "Exact report message link (recommended when it is not the latest message)")] string messageLink = "")
     {
         try
         {
@@ -51,29 +55,33 @@ public class GithubCommands : InteractionModuleBase
         {
             if (callingChannel == null)
                 throw new Exception("Calling channel is null");
-            var lastMessage = (await callingChannel.GetMessagesAsync(1).FlattenAsync()).First();
-            body += "\ncontext:" + lastMessage.GetJumpUrl();
-            if (string.Equals(repo, "SkySniper", StringComparison.OrdinalIgnoreCase))
+            IMessage? reportMessage;
+            if (!string.IsNullOrWhiteSpace(messageLink))
             {
-                var imageUrls = lastMessage.Attachments
-                    .Where(IsPublicIssueImage)
-                    .Select(attachment => attachment.Url)
-                    .Distinct(StringComparer.Ordinal)
-                    .Take(MaxPublicIssueImages);
-                body += string.Concat(imageUrls.Select((imageUrl, index) => $"\n![Discord issue image {index + 1}]({imageUrl})"));
+                var messageId = ExactMessageId(messageLink, Context.Interaction.GuildId, Context.Interaction.ChannelId)
+                    ?? throw new ArgumentException("The report message link must target this exact Discord channel.", nameof(messageLink));
+                reportMessage = await callingChannel.GetMessageAsync(messageId);
             }
+            else
+            {
+                // DeferAsync creates the newest channel entry. Use the interaction
+                // snowflake as the exclusive cursor, then ignore bot/webhook prompts
+                // in the small backward page.
+                var candidates = (await callingChannel.GetMessagesAsync(Context.Interaction.Id, Direction.Before, MaxIssueSourceMessages).FlattenAsync()).ToList();
+                var reportMessageId = SelectReportMessageId(candidates.Select(candidate => (candidate.Id, candidate.Author.IsBot, candidate.Author.IsWebhook)));
+                reportMessage = reportMessageId == null ? null : candidates.First(candidate => candidate.Id == reportMessageId);
+            }
+            if (reportMessage == null || reportMessage.Author.IsBot || reportMessage.Author.IsWebhook)
+                throw new Exception("No ordinary user report message was found in the bounded channel history");
+            body = AppendIssueContext(body, repo, reportMessage.GetJumpUrl(), reportMessage.Attachments
+                .Select(attachment => ((long)attachment.Size, (string?)attachment.ContentType, attachment.Url)));
             canread = true;
         }
         catch (Exception e)
         {
-            logger.LogError(e, "Error getting last message");
-            string? guildId = Context.Interaction.GuildId?.ToString();
-            if (string.IsNullOrEmpty(guildId))
-                guildId = "@me";
-            ulong channelId = Context.Interaction.ChannelId ?? 0UL;
-            logger.LogInformation("App command context - GuildId: {GuildId}, ChannelId: {ChannelId}", guildId, channelId);
-            var channelUrl = "https://discord.com/channels/" + Context.Interaction.GuildId + "/" + Context.Interaction.ChannelId;
-            body += $"\ncontext: {channelUrl}";
+            logger.LogError(e, "Error resolving issue source message");
+            await FollowupAsync("Could not identify the report message. Run `/issue` again with its exact Discord message link in the `message` option.", ephemeral: true);
+            return;
         }
         body = body.Replace(" https://discord.com/channels//", "https://discord.com/channels/@me/"); // dm messages
         var newIssue = new NewIssue(title)
@@ -127,6 +135,39 @@ public class GithubCommands : InteractionModuleBase
         var filename = Uri.UnescapeDataString(uri.AbsolutePath[(uri.AbsolutePath.LastIndexOf('/') + 1)..]);
         return filename is not "." and not ".." && filename.Length <= 255 && !filename.Contains('/') && !filename.Contains('\\')
             && !filename.Any(character => char.IsControl(character));
+    }
+
+    internal static ulong? ExactMessageId(string url, ulong? guildId, ulong? channelId)
+    {
+        var match = DiscordMessageLink.Match(url);
+        if (!match.Success || channelId == null || !ulong.TryParse(match.Groups["channel"].Value, out var linkedChannel)
+            || linkedChannel != channelId || !ulong.TryParse(match.Groups["message"].Value, out var messageId))
+            return null;
+        var linkedGuild = match.Groups["guild"].Value;
+        if (guildId == null ? linkedGuild != "@me" : linkedGuild != guildId.Value.ToString())
+            return null;
+        return messageId;
+    }
+
+    internal static ulong? SelectReportMessageId(IEnumerable<(ulong Id, bool IsBot, bool IsWebhook)> candidates)
+    {
+        foreach (var candidate in candidates)
+            if (!candidate.IsBot && !candidate.IsWebhook)
+                return candidate.Id;
+        return null;
+    }
+
+    internal static string AppendIssueContext(string body, string repository, string jumpUrl, IEnumerable<(long Size, string? ContentType, string Url)> attachments)
+    {
+        body += "\ncontext:" + jumpUrl;
+        if (!PublicIssueImageRepositories.Contains(repository))
+            return body;
+        var imageUrls = attachments
+            .Where(attachment => IsPublicIssueImage(attachment.Size, attachment.ContentType, attachment.Url))
+            .Select(attachment => attachment.Url)
+            .Distinct(StringComparer.Ordinal)
+            .Take(MaxPublicIssueImages);
+        return body + string.Concat(imageUrls.Select((imageUrl, index) => $"\n![Discord issue image {index + 1}]({imageUrl})"));
     }
 
     private async Task PutIssueOnBoard(string issueId)
