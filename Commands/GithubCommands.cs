@@ -11,6 +11,8 @@ public class GithubCommands : InteractionModuleBase
     GitHubClient github;
     Octokit.GraphQL.Connection connection;
     ILogger<GithubCommands> logger;
+    IssueEvidenceService evidence;
+    IssueDraftService drafts;
     const int MaxPublicIssueImages = 3;
     const int MaxPublicIssueImageBytes = 10 << 20;
     const int MaxIssueSourceMessages = 25;
@@ -20,11 +22,14 @@ public class GithubCommands : InteractionModuleBase
     static readonly HashSet<string> PublicIssueImageTypes = new(StringComparer.OrdinalIgnoreCase) { "image/png", "image/jpeg", "image/gif" };
     static readonly HashSet<string> PublicIssueImageRepositories = new(StringComparer.OrdinalIgnoreCase) { "SkyApi", "SkyModCommands", "SkySniper" };
 
-    public GithubCommands(GitHubClient github, Octokit.GraphQL.Connection connection, ILogger<GithubCommands> logger)
+    public GithubCommands(GitHubClient github, Octokit.GraphQL.Connection connection, ILogger<GithubCommands> logger,
+        IssueEvidenceService evidence, IssueDraftService drafts)
     {
         this.github = github;
         this.connection = connection;
         this.logger = logger;
+        this.evidence = evidence;
+        this.drafts = drafts;
     }
 
     [SlashCommand("issue", "Creates a github issue", true)]
@@ -33,7 +38,7 @@ public class GithubCommands : InteractionModuleBase
     public async Task Issue([Summary("title", "Title of the issue")] string title,
         [Summary("repo", "Repository to create the issue in"), Autocomplete<GitRepoAutocompleteHandler>()] string repo,
         [Summary("body", "Body of the issue")] string body = "",
-        [Summary("message", "Exact report message link (recommended when it is not the latest message)")] string messageLink = "")
+        [Summary("message", "Issue details, or an exact Discord report message link")] string message = "")
     {
         try
         {
@@ -50,17 +55,25 @@ public class GithubCommands : InteractionModuleBase
             await FollowupAsync("This can currently only be executed if you connected your Github account");
             return;
         }
+        if (PublicIssueImageRepositories.Contains(repo) && !evidence.IsConfigured)
+        {
+            await FollowupAsync("Discord issue evidence is not configured; no issue was created.", ephemeral: true);
+            return;
+        }
         bool canread = false;
+        ulong reportGuildId = 0;
+        ulong reportChannelId = 0;
+        ulong reportMessageId = 0;
+        var resolvedInput = ResolveMessageInput(body, message, Context.Interaction.GuildId, Context.Interaction.ChannelId);
+        body = resolvedInput.Body;
         try
         {
             if (callingChannel == null)
                 throw new Exception("Calling channel is null");
             IMessage? reportMessage;
-            if (!string.IsNullOrWhiteSpace(messageLink))
+            if (resolvedInput.MessageId != null)
             {
-                var messageId = ExactMessageId(messageLink, Context.Interaction.GuildId, Context.Interaction.ChannelId)
-                    ?? throw new ArgumentException("The report message link must target this exact Discord channel.", nameof(messageLink));
-                reportMessage = await callingChannel.GetMessageAsync(messageId);
+                reportMessage = await callingChannel.GetMessageAsync(resolvedInput.MessageId.Value);
             }
             else
             {
@@ -68,19 +81,40 @@ public class GithubCommands : InteractionModuleBase
                 // snowflake as the exclusive cursor, then ignore bot/webhook prompts
                 // in the small backward page.
                 var candidates = (await callingChannel.GetMessagesAsync(Context.Interaction.Id, Direction.Before, MaxIssueSourceMessages).FlattenAsync()).ToList();
-                var reportMessageId = SelectReportMessageId(candidates.Select(candidate => (candidate.Id, candidate.Author.IsBot, candidate.Author.IsWebhook)));
-                reportMessage = reportMessageId == null ? null : candidates.First(candidate => candidate.Id == reportMessageId);
+                var selectedReportId = SelectReportMessageId(candidates.Select(candidate => (candidate.Id, candidate.Author.Id, candidate.Author.IsBot, candidate.Author.IsWebhook)), Context.User.Id);
+                reportMessage = selectedReportId == null ? null : candidates.First(candidate => candidate.Id == selectedReportId);
             }
             if (reportMessage == null || reportMessage.Author.IsBot || reportMessage.Author.IsWebhook)
                 throw new Exception("No ordinary user report message was found in the bounded channel history");
+            reportGuildId = Context.Interaction.GuildId ?? 0;
+            reportChannelId = Context.Interaction.ChannelId ?? 0;
+            reportMessageId = reportMessage.Id;
             body = AppendIssueContext(body, repo, reportMessage.GetJumpUrl(), reportMessage.Attachments
                 .Select(attachment => ((long)attachment.Size, (string?)attachment.ContentType, attachment.Url)));
             canread = true;
         }
         catch (Exception e)
         {
-            logger.LogError(e, "Error resolving issue source message");
-            await FollowupAsync("Could not identify the report message. Run `/issue` again with its exact Discord message link in the `message` option.", ephemeral: true);
+            logger.LogInformation("Automatic issue source resolution failed: {Category}", e.GetType().Name);
+            try
+            {
+                var token = drafts.Create(title, repo, body, Context.User.Id,
+                    Context.Interaction.GuildId ?? 0, Context.Interaction.ChannelId ?? 0);
+                var components = new ComponentBuilder()
+                    .WithButton("Choose report message", $"issue-source:{token}", ButtonStyle.Primary)
+                    .Build();
+                await FollowupAsync("I could not identify your recent report message automatically. Choose it explicitly to continue the same issue.", components: components, ephemeral: true);
+            }
+            catch (IssueDraftDenied denied)
+            {
+                logger.LogWarning("Issue draft could not be created: {Category}", denied.Message);
+                await FollowupAsync("I could not preserve this issue draft. Run `/issue` again.", ephemeral: true);
+            }
+            return;
+        }
+        if (PublicIssueImageRepositories.Contains(repo) && !IssueEvidenceService.IsAllowedIssueSource("Coflnet/" + repo, reportGuildId))
+        {
+            await FollowupAsync("Issue evidence is accepted only from the Coflnet server; no issue was created.", ephemeral: true);
             return;
         }
         body = body.Replace(" https://discord.com/channels//", "https://discord.com/channels/@me/"); // dm messages
@@ -91,6 +125,19 @@ public class GithubCommands : InteractionModuleBase
         try
         {
             var issue = await github.Issue.Create("Coflnet", repo, newIssue);
+
+            if (PublicIssueImageRepositories.Contains(repo))
+            {
+                var binding = evidence.CreateBinding("Coflnet/" + repo, issue.Number, reportGuildId, reportChannelId, reportMessageId);
+                var marker = $"<!-- coflnet-discord-evidence:v1 binding={binding} -->";
+                body += "\n" + marker;
+                await FinalizeEvidenceMarker(
+                    () => github.Issue.Update("Coflnet", repo, issue.Number, new IssueUpdate { Body = body }),
+                    async () => (await github.Issue.Get("Coflnet", repo, issue.Number)).Body,
+                    () => github.Issue.Update("Coflnet", repo, issue.Number,
+                        new IssueUpdate { State = ItemState.Closed, StateReason = ItemStateReason.NotPlanned }),
+                    marker);
+            }
 
             var assignees = string.Equals(repo, "SkySniper", StringComparison.OrdinalIgnoreCase)
                 ? new[] { "Ekwav", "ekwav-agent" } : new[] { "Ekwav" };
@@ -112,6 +159,12 @@ public class GithubCommands : InteractionModuleBase
             await FollowupAsync($"Error creating issue in repository '{repo}': {apiEx.Message}", ephemeral: true);
             return;
         }
+        catch (IssueMarkerFinalizationException)
+        {
+            logger.LogError("Could not finalize Discord evidence marker for newly created issue in {Repo}", repo);
+            await FollowupAsync("Issue evidence finalization failed; issue creation was aborted. Ask a maintainer to verify the incomplete issue, then run `/issue` again.", ephemeral: true);
+            return;
+        }
         catch (Exception e)
         {
             Console.WriteLine(e);
@@ -119,6 +172,41 @@ public class GithubCommands : InteractionModuleBase
         }
 
     }
+
+    internal static async Task FinalizeEvidenceMarker(Func<Task> update, Func<Task<string?>> reread,
+        Func<Task> close, string marker)
+    {
+        try
+        {
+            await update();
+            return;
+        }
+        catch
+        {
+            try
+            {
+                var body = await reread();
+                if ((body ?? "").ReplaceLineEndings("\n").Split('\n').Contains(marker, StringComparer.Ordinal))
+                    return;
+            }
+            catch
+            {
+                // Without an exact marker read-back, fail closed below.
+            }
+
+            try
+            {
+                await close();
+            }
+            catch
+            {
+                // Preserve the fixed, non-sensitive finalization error.
+            }
+            throw new IssueMarkerFinalizationException();
+        }
+    }
+
+    internal sealed class IssueMarkerFinalizationException : Exception;
 
     internal static bool IsPublicIssueImage(IAttachment attachment) =>
         IsPublicIssueImage(attachment.Size, attachment.ContentType, attachment.Url);
@@ -149,10 +237,20 @@ public class GithubCommands : InteractionModuleBase
         return messageId;
     }
 
-    internal static ulong? SelectReportMessageId(IEnumerable<(ulong Id, bool IsBot, bool IsWebhook)> candidates)
+    internal static (string Body, ulong? MessageId) ResolveMessageInput(string body, string message, ulong? guildId, ulong? channelId)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return (body, null);
+        var messageId = ExactMessageId(message, guildId, channelId);
+        if (messageId != null)
+            return (body, messageId);
+        return (string.IsNullOrWhiteSpace(body) ? message : body + "\n\n" + message, null);
+    }
+
+    internal static ulong? SelectReportMessageId(IEnumerable<(ulong Id, ulong AuthorId, bool IsBot, bool IsWebhook)> candidates, ulong invokingUserId)
     {
         foreach (var candidate in candidates)
-            if (!candidate.IsBot && !candidate.IsWebhook)
+            if (candidate.AuthorId == invokingUserId && !candidate.IsBot && !candidate.IsWebhook)
                 return candidate.Id;
         return null;
     }
@@ -168,6 +266,64 @@ public class GithubCommands : InteractionModuleBase
             .Distinct(StringComparer.Ordinal)
             .Take(MaxPublicIssueImages);
         return body + string.Concat(imageUrls.Select((imageUrl, index) => $"\n![Discord issue image {index + 1}]({imageUrl})"));
+    }
+
+    [ComponentInteraction("issue-source:*", true)]
+    public async Task ChooseIssueSource(string token)
+    {
+        try
+        {
+            drafts.Peek(token, Context.User.Id, Context.Interaction.GuildId ?? 0, Context.Interaction.ChannelId ?? 0);
+            if (Context.Interaction is not SocketMessageComponent component)
+                throw new IssueDraftDenied("invalid_component_context");
+            await component.RespondWithModalAsync<IssueSourceModal>($"issue-source-modal:{token}");
+        }
+        catch (IssueDraftDenied)
+        {
+            await RespondAsync("This issue draft expired or belongs to a different user or channel. Run `/issue` again.", ephemeral: true);
+        }
+    }
+
+    [ModalInteraction("issue-source-modal:*", true)]
+    public async Task SubmitIssueSource(string token, IssueSourceModal modal)
+    {
+        try
+        {
+            var guildId = Context.Interaction.GuildId ?? 0;
+            var channelId = Context.Interaction.ChannelId ?? 0;
+            if (ExactMessageId(modal.MessageLink, Context.Interaction.GuildId, Context.Interaction.ChannelId) == null)
+            {
+                await RespondAsync("Paste one exact Discord message link from this channel.", ephemeral: true);
+                return;
+            }
+            var pending = drafts.Peek(token, Context.User.Id, guildId, channelId);
+            if (pending.Body.Length + (modal.ExtraDetails?.Length ?? 0) > 64 << 10)
+            {
+                await RespondAsync("The combined issue details exceed the bounded draft size.", ephemeral: true);
+                return;
+            }
+            var draft = drafts.Take(token, Context.User.Id, guildId, channelId);
+            var details = string.IsNullOrWhiteSpace(modal.ExtraDetails)
+                ? draft.Body
+                : draft.Body + (string.IsNullOrWhiteSpace(draft.Body) ? "" : "\n\n") + modal.ExtraDetails;
+            await Issue(draft.Title, draft.Repository, details, modal.MessageLink);
+        }
+        catch (IssueDraftDenied)
+        {
+            await RespondAsync("This issue draft expired or was already submitted. Run `/issue` again.", ephemeral: true);
+        }
+    }
+
+    public sealed class IssueSourceModal : IModal
+    {
+        public string Title => "Choose report message";
+
+        [ModalTextInput("message-link", TextInputStyle.Short, "Exact Discord message link", 1, 300)]
+        public string MessageLink { get; set; } = "";
+
+        [ModalTextInput("extra-details", TextInputStyle.Paragraph, "Optional extra details", 0, 2000)]
+        [RequiredInput(false)]
+        public string ExtraDetails { get; set; } = "";
     }
 
     private async Task PutIssueOnBoard(string issueId)

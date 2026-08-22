@@ -164,6 +164,53 @@ public class DiscordHandler : BackgroundService
         }
     }
 
+    public async Task<IReadOnlyList<IMessage>> GetExactEvidenceMessages(ulong channelId, ulong sourceMessageId, ulong afterMessageId, int limit)
+    {
+        if (client == null || limit is < 1 or > IssueEvidenceService.MaxMessages
+            || await client.GetChannelAsync(channelId) is not IMessageChannel channel)
+            throw new EvidenceDenied("bound_channel_unavailable");
+        if (channel is not SocketGuildChannel guildChannel || guildChannel.Guild.Id != IssueEvidenceService.CoflnetGuildId)
+            throw new EvidenceDenied("bound_guild_mismatch");
+        var source = await channel.GetMessageAsync(sourceMessageId);
+        if (source == null)
+            throw new EvidenceDenied("bound_source_message_unavailable");
+
+        var sourceIsInThread = channel is SocketThreadChannel;
+        SocketThreadChannel? thread = channel as SocketThreadChannel;
+        if (thread == null && await client.GetChannelAsync(sourceMessageId) is SocketThreadChannel attached
+            && IsExactAttachedThread(channelId, sourceMessageId, attached.ParentChannel.Id, attached.Id))
+            thread = attached;
+
+        // A normal channel authorizes only the exact source and its attached
+        // thread. It never authorizes adjacent channel history. If the command
+        // ran inside a thread, only that exact thread is used.
+        if (thread == null)
+            return afterMessageId == 0 ? [source] : [];
+        if (afterMessageId != 0)
+        {
+            var later = await thread.GetMessagesAsync(afterMessageId, Direction.After, limit).FlattenAsync();
+            return later.OrderBy(message => message.Id).Take(limit).ToList();
+        }
+
+        var (priorLimit, initialLaterLimit) = EvidenceThreadWindowLimits(limit, sourceIsInThread);
+        List<IMessage> prior = priorLimit == 0 ? [] : (await thread.GetMessagesAsync(sourceMessageId, Direction.Before, priorLimit).FlattenAsync())
+            .OrderBy(message => message.Id).TakeLast(priorLimit).ToList();
+        var laterLimit = initialLaterLimit + (priorLimit - prior.Count);
+        List<IMessage> after = laterLimit == 0 ? [] : (await thread.GetMessagesAsync(sourceMessageId, Direction.After, laterLimit).FlattenAsync())
+            .OrderBy(message => message.Id).Take(laterLimit).ToList();
+        return prior.Concat([source]).Concat(after).OrderBy(message => message.Id).Take(limit).ToList();
+    }
+
+    internal static bool IsExactAttachedThread(ulong boundChannelId, ulong sourceMessageId, ulong candidateParentId, ulong candidateThreadId) =>
+        candidateParentId == boundChannelId && candidateThreadId == sourceMessageId;
+
+    internal static (int Prior, int Later) EvidenceThreadWindowLimits(int limit, bool sourceIsInThread)
+    {
+        if (limit < 1) throw new ArgumentOutOfRangeException(nameof(limit));
+        var prior = sourceIsInThread ? (limit - 1) / 2 : 0;
+        return (prior, limit - 1 - prior);
+    }
+
     public bool IsUserInVoiceChannel(ulong userId, ulong channelId)
     {
         return client?.GetChannel(channelId) is SocketVoiceChannel channel

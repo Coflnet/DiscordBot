@@ -63,15 +63,32 @@ public class GitRepoAutocompleteHandlerTests
     {
         var candidates = new[]
         {
-            (Id: 30UL, IsBot: true, IsWebhook: false),
-            (Id: 20UL, IsBot: false, IsWebhook: true),
-            (Id: 10UL, IsBot: false, IsWebhook: false)
+            (Id: 40UL, AuthorId: 7UL, IsBot: true, IsWebhook: false),
+            (Id: 30UL, AuthorId: 7UL, IsBot: false, IsWebhook: true),
+            (Id: 20UL, AuthorId: 8UL, IsBot: false, IsWebhook: false),
+            (Id: 10UL, AuthorId: 7UL, IsBot: false, IsWebhook: false)
         };
 
         Assert.Multiple(() =>
         {
-            Assert.That(GithubCommands.SelectReportMessageId(candidates), Is.EqualTo(10UL));
-            Assert.That(GithubCommands.SelectReportMessageId(candidates.Take(2)), Is.Null);
+            Assert.That(GithubCommands.SelectReportMessageId(candidates, 7), Is.EqualTo(10UL));
+            Assert.That(GithubCommands.SelectReportMessageId(candidates.Take(3), 7), Is.Null);
+        });
+    }
+
+    [Test]
+    public void FreeTextMessageIsIssueDetailWhileExactLinkSelectsSource()
+    {
+        const string link = "https://discord.com/channels/267680588666896385/1540465169019179128/1540479250002354246";
+        var details = GithubCommands.ResolveMessageInput("existing", "Bazaar and AH prices should indicate live updates", 267680588666896385, 1540465169019179128);
+        var exact = GithubCommands.ResolveMessageInput("existing", link, 267680588666896385, 1540465169019179128);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(details.Body, Is.EqualTo("existing\n\nBazaar and AH prices should indicate live updates"));
+            Assert.That(details.MessageId, Is.Null);
+            Assert.That(exact.Body, Is.EqualTo("existing"));
+            Assert.That(exact.MessageId, Is.EqualTo(1540479250002354246));
         });
     }
 
@@ -93,6 +110,71 @@ public class GitRepoAutocompleteHandlerTests
             Assert.That(body, Does.Not.Contain("report-4.png"));
             Assert.That(body, Does.Not.Contain("unsafe.svg"));
             Assert.That(unenrolled, Does.Not.Contain("![Discord issue image"));
+        });
+    }
+
+    [Test]
+    public async Task EvidenceMarkerUpdateSuccessDoesNotReadOrClose()
+    {
+        var reads = 0;
+        var closes = 0;
+
+        await GithubCommands.FinalizeEvidenceMarker(
+            () => Task.CompletedTask,
+            () => { reads++; return Task.FromResult<string?>(null); },
+            () => { closes++; return Task.CompletedTask; },
+            "<!-- marker -->");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(reads, Is.Zero);
+            Assert.That(closes, Is.Zero);
+        });
+    }
+
+    [Test]
+    public async Task AmbiguousUpdateWithExactMarkerIsAccepted()
+    {
+        var closes = 0;
+
+        await GithubCommands.FinalizeEvidenceMarker(
+            () => Task.FromException(new Exception("ambiguous")),
+            () => Task.FromResult<string?>("body\n<!-- marker -->"),
+            () => { closes++; return Task.CompletedTask; },
+            "<!-- marker -->");
+
+        Assert.That(closes, Is.Zero);
+    }
+
+    [Test]
+    public void MissingEvidenceMarkerClosesExactIssueAndFails()
+    {
+        var closes = 0;
+
+        Assert.That(async () => await GithubCommands.FinalizeEvidenceMarker(
+            () => Task.FromException(new Exception("provider detail")),
+            () => Task.FromResult<string?>("body\n<!-- marker -->suffix"),
+            () => { closes++; return Task.CompletedTask; },
+            "<!-- marker -->"), Throws.TypeOf<GithubCommands.IssueMarkerFinalizationException>());
+        Assert.That(closes, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void FailedReadBackStillAttemptsCloseAndReturnsFixedError()
+    {
+        var closes = 0;
+
+        var error = Assert.ThrowsAsync<GithubCommands.IssueMarkerFinalizationException>(() =>
+            GithubCommands.FinalizeEvidenceMarker(
+                () => Task.FromException(new Exception("update secret")),
+                () => Task.FromException<string?>(new Exception("read secret")),
+                () => { closes++; return Task.FromException(new Exception("close secret")); },
+                "<!-- marker -->"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(closes, Is.EqualTo(1));
+            Assert.That(error!.Message, Does.Not.Contain("secret"));
         });
     }
 }
