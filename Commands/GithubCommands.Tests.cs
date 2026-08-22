@@ -45,6 +45,69 @@ public class GitRepoAutocompleteHandlerTests
         });
     }
 
+    [TestCase(DiscordImage)]
+    [TestCase(DiscordImage + "?ex=1234abcd&is=5678abcd&hm=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public void PastedImageLinksAreAcceptedWhenWellFormed(string url)
+    {
+        Assert.That(GithubCommands.IsPastedIssueImageUrl(url), Is.True);
+    }
+
+    [TestCase("http://cdn.discordapp.com/attachments/12345678901234567/23456789012345678/report.png")]
+    [TestCase("https://cdn.discordapp.com.evil.example/attachments/12345678901234567/23456789012345678/report.png")]
+    [TestCase(DiscordImage + "?ex=1234abcd&hm=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&is=5678abcd")]
+    public void PastedLinksAreRejectedWhenMalformed(string url)
+    {
+        Assert.That(GithubCommands.IsPastedIssueImageUrl(url), Is.False);
+    }
+
+    [Test]
+    public void PastedSvgExtensionIsRejected()
+    {
+        Assert.That(GithubCommands.IsPastedIssueImageUrl(DiscordImage.Replace("report.png", "unsafe.svg")), Is.False);
+    }
+
+    [Test]
+    public void ParsePastedImageUrlsKeepsValidDedupedAndCapped()
+    {
+        var text = string.Join("\n", DiscordImage, "not a url", DiscordImage,
+            DiscordImage.Replace("report.png", "b.png"), DiscordImage.Replace("report.png", "c.png"), DiscordImage.Replace("report.png", "d.png"));
+
+        var parsed = GithubCommands.ParsePastedImageUrls(text);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(parsed.Count, Is.EqualTo(3));
+            Assert.That(parsed, Does.Contain(DiscordImage));
+            Assert.That(parsed, Does.Not.Contain(DiscordImage.Replace("report.png", "d.png")));
+        });
+    }
+
+    [Test]
+    public async Task TryDownloadIssueImageTreatsAThrowAsAFailedDownload()
+    {
+        Task<(byte[] Data, string MediaType)?> Throwing(string url, CancellationToken token) => throw new HttpRequestException("boom");
+
+        var result = await GithubCommands.TryDownloadIssueImage(Throwing, "https://cdn.discordapp.com/x.png", CancellationToken.None);
+
+        Assert.That(result, Is.Null);
+    }
+
+    [Test]
+    public async Task TryDownloadIssueImagePassesThroughASuccessfulResult()
+    {
+        Task<(byte[] Data, string MediaType)?> Succeeding(string url, CancellationToken token) =>
+            Task.FromResult<(byte[] Data, string MediaType)?>((new byte[] { 1, 2, 3 }, "image/png"));
+
+        var result = await GithubCommands.TryDownloadIssueImage(Succeeding, "https://cdn.discordapp.com/x.png", CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result!.Value.MediaType, Is.EqualTo("image/png"));
+            Assert.That(result.Value.Data, Is.EqualTo(new byte[] { 1, 2, 3 }));
+        });
+    }
+
     [Test]
     public void ExactReportLinkMustTargetCurrentChannel()
     {
@@ -129,23 +192,87 @@ public class GitRepoAutocompleteHandlerTests
     }
 
     [Test]
-    public void IssueContextIncludesAtMostThreeDistinctReviewedImages()
+    public void CanBindEvidenceRequiresAMessageAndAnAllowedSource()
     {
-        var images = Enumerable.Range(1, 5)
-            .Select(index => (1024L, (string?)"image/png", DiscordImage.Replace("report.png", $"report-{index}.png")))
-            .Append((1024L, (string?)"image/png", DiscordImage.Replace("report.png", "report-1.png")))
-            .Append((1024L, (string?)"image/svg+xml", DiscordImage.Replace("report.png", "unsafe.svg")));
+        const ulong coflnet = IssueEvidenceService.CoflnetGuildId;
+        Assert.Multiple(() =>
+        {
+            // No message at all - the "paste report content" path (unreadable source): never bindable.
+            Assert.That(GithubCommands.CanBindEvidence("Coflnet/SkyModCommands", 0, 0), Is.False);
+            // guildId 0 with a real message only occurs when the source was verified as the invoking
+            // user's own bot DM (Issue() only reaches canread=true with reportGuildId 0 in that case).
+            Assert.That(GithubCommands.CanBindEvidence("Coflnet/SkyModCommands", 0, 123), Is.True);
+            Assert.That(GithubCommands.CanBindEvidence("Coflnet/SkyModCommands", coflnet, 123), Is.True);
+            Assert.That(GithubCommands.CanBindEvidence("Coflnet/SkyModCommands", 999, 123), Is.False);
+            Assert.That(GithubCommands.CanBindEvidence("Coflnet/OtherRepo", coflnet, 123), Is.False);
+        });
+    }
 
-        var body = GithubCommands.AppendIssueContext("details", "SkyModCommands", "https://discord.com/channels/1/2/3", images);
-        var unenrolled = GithubCommands.AppendIssueContext("details", "OtherRepo", "https://discord.com/channels/1/2/3", images);
+    [Test]
+    public void ResolveHarvestedImageUrlsKeepsOnlyReviewedImages()
+    {
+        var attachments = new[]
+        {
+            (1024L, (string?)"image/png", DiscordImage),
+            (1024L, (string?)"image/svg+xml", DiscordImage.Replace("report.png", "unsafe.svg")),
+        };
+
+        Assert.That(GithubCommands.ResolveHarvestedImageUrls(attachments), Is.EqualTo(new[] { DiscordImage }));
+    }
+
+    [Test]
+    public void ResolveAttachedImageUrlsRejectsMalformedLinks()
+    {
+        var urls = new[] { DiscordImage, DiscordImage.Replace("report.png", "unsafe.svg") };
+
+        Assert.That(GithubCommands.ResolveAttachedImageUrls(urls), Is.EqualTo(new[] { DiscordImage }));
+    }
+
+    [Test]
+    public void AppendIssueContextCapsAtThreeDistinctImagesAndGatesHarvestedByRepo()
+    {
+        var harvested = new[] { "img1", "img2", "img1", "img3", "img4" }.Select(name => DiscordImage.Replace("report.png", $"{name}.png"));
+
+        var body = GithubCommands.AppendIssueContext("details", "SkyModCommands", "https://discord.com/channels/1/2/3", harvested, Enumerable.Empty<string>());
+        var unenrolled = GithubCommands.AppendIssueContext("details", "OtherRepo", "https://discord.com/channels/1/2/3", harvested, Enumerable.Empty<string>());
 
         Assert.Multiple(() =>
         {
             Assert.That(body, Does.Contain("context:https://discord.com/channels/1/2/3"));
-            Assert.That(body.Split("![Discord issue image ").Length - 1, Is.EqualTo(3));
-            Assert.That(body, Does.Not.Contain("report-4.png"));
-            Assert.That(body, Does.Not.Contain("unsafe.svg"));
-            Assert.That(unenrolled, Does.Not.Contain("![Discord issue image"));
+            Assert.That(body, Does.Contain("3 screenshots attached as Discord evidence"));
+            Assert.That(body, Does.Not.Contain("!["));
+            Assert.That(unenrolled, Does.Not.Contain("screenshot"));
+        });
+    }
+
+    [Test]
+    public void AttachedImagesCountForAnyRepoAndSurviveTheHarvestedCap()
+    {
+        const string attachedUrl = "https://cdn.discordapp.com/attachments/12345678901234567/23456789012345678/attached.png";
+        var harvested = new[] { "h1", "h2", "h3" }.Select(name => DiscordImage.Replace("report.png", $"{name}.png"));
+
+        var unenrolled = GithubCommands.AppendIssueContext("details", "OtherRepo", "https://discord.com/channels/1/2/3", harvested, new[] { attachedUrl });
+        var capped = GithubCommands.AppendIssueContext("details", "SkyModCommands", "https://discord.com/channels/1/2/3", harvested, new[] { attachedUrl });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(unenrolled, Does.Contain("1 screenshot attached as Discord evidence"));
+            Assert.That(capped, Does.Contain("3 screenshots attached as Discord evidence"));
+            Assert.That(capped, Does.Not.Contain("!["));
+            Assert.That(capped, Does.Not.Contain(attachedUrl));
+        });
+    }
+
+    [Test]
+    public void ContextLineEmbedsExactDirectMessageLinkVerbatimWithNoImageMarkdown()
+    {
+        const string link = "https://discord.com/channels/@me/1535522079699509299/1540607865847418932";
+        var body = GithubCommands.AppendIssueContext("details", "OtherRepo", link, Enumerable.Empty<string>(), Enumerable.Empty<string>());
+        Assert.Multiple(() =>
+        {
+            Assert.That(body, Does.Contain("context:" + link));
+            Assert.That(body, Does.Not.Contain("!["));
+            Assert.That(body, Does.Not.Contain("screenshot"));
         });
     }
 

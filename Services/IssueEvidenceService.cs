@@ -52,13 +52,15 @@ public sealed class IssueEvidenceService
         Repositories.Contains(repository) && guildId is 0 or CoflnetGuildId;
 
     public string CreateBinding(string repository, long issueNumber, ulong guildId, ulong channelId, ulong messageId,
-        ulong recipientId = 0)
+        ulong recipientId = 0, string? sourceKind = null)
     {
         if (!IsConfigured || !IsAllowedIssueSource(repository, guildId) || issueNumber < 1
-            || channelId == 0 || messageId == 0 || (guildId == 0) != (recipientId != 0))
+            || channelId == 0 || messageId == 0 || (guildId == 0) != (recipientId != 0)
+            || sourceKind is not (null or "" or "bot-dm-mirror")
+            || (sourceKind == "bot-dm-mirror" && !(guildId == 0 && recipientId != 0)))
             throw new InvalidOperationException("Discord issue evidence binding is unavailable for this target");
         var payload = new BindingPayload(1, repository, issueNumber, guildId.ToString(), channelId.ToString(),
-            messageId.ToString(), recipientId.ToString(), now().UtcDateTime.ToString("O"), Base64Url(RandomNumberGenerator.GetBytes(16)));
+            messageId.ToString(), recipientId.ToString(), sourceKind, now().UtcDateTime.ToString("O"), Base64Url(RandomNumberGenerator.GetBytes(16)));
         var encodedPayload = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
         var envelope = new BindingEnvelope(Base64Url(encodedPayload), Base64Url(Sign(bindingKey, encodedPayload)));
         return Base64Url(JsonSerializer.SerializeToUtf8Bytes(envelope, JsonOptions));
@@ -90,6 +92,8 @@ public sealed class IssueEvidenceService
             || !ulong.TryParse(payload.ChannelId, out var channel) || channel == 0
             || !ulong.TryParse(payload.MessageId, out var message) || message == 0
             || !ulong.TryParse(payload.RecipientId ?? "0", out var recipient) || (guildId == 0) != (recipient != 0)
+            || payload.SourceKind is not (null or "" or "bot-dm-mirror")
+            || (payload.SourceKind == "bot-dm-mirror" && !(guildId == 0 && recipient != 0))
             || !DateTimeOffset.TryParse(payload.CreatedAt, out var created) || created > now().AddMinutes(1)
             || created < now().AddDays(-14) || FromBase64Url(payload.Nonce).Length != 16)
             throw new EvidenceDenied("binding_mismatch_or_expired");
@@ -128,6 +132,7 @@ public sealed class IssueEvidenceService
         var sourceId = ulong.Parse(binding.MessageId);
         var guildId = ulong.Parse(binding.GuildId);
         var recipientId = ulong.Parse(binding.RecipientId ?? "0");
+        var sourceKind = binding.SourceKind ?? "";
         ulong after = 0;
         var seen = 0;
         if (!string.IsNullOrEmpty(request.After)) (after, seen) = ValidateCursor(request.After, bindingDigest);
@@ -135,7 +140,7 @@ public sealed class IssueEvidenceService
         if (remaining == 0)
             return new("coflnet.discord.issue-evidence-raw/v1", request.Repository, request.IssueNumber,
                 bindingDigest, [], [], request.After, true, new(0, 0, 0, 0));
-        var rawMessages = await discord.GetExactEvidenceMessages(guildId, channelId, sourceId, recipientId, after, remaining);
+        var rawMessages = await discord.GetExactEvidenceMessages(guildId, channelId, sourceId, recipientId, sourceKind, after, remaining);
         if (rawMessages.Count == 0)
             return new("coflnet.discord.issue-evidence-raw/v1", request.Repository, request.IssueNumber,
                 bindingDigest, [], [], request.After, true, new(0, 0, 0, 0));
@@ -227,14 +232,17 @@ public sealed class IssueEvidenceService
         catch { throw new EvidenceDenied("invalid_cursor"); }
     }
 
-    private async Task<byte[]?> DownloadImage(IAttachment attachment, CancellationToken cancellationToken)
+    // Bounded, content-type-verified download shared by the harvested-attachment path (which
+    // additionally knows the exact expected size) and pasted image links (which don't).
+    internal async Task<(byte[] Data, string MediaType)?> DownloadIssueImage(string url, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, attachment.Url);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.TryAddWithoutValidation("Accept", "image/png,image/jpeg,image/gif");
         using var response = await httpClients.CreateClient("discord-evidence-images")
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        var contentType = response.Content.Headers.ContentType?.MediaType;
         if (response.StatusCode != System.Net.HttpStatusCode.OK || response.Content.Headers.ContentLength > MaxImageBytes
-            || response.Content.Headers.ContentType?.MediaType != attachment.ContentType) return null;
+            || contentType is not ("image/png" or "image/jpeg" or "image/gif")) return null;
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var output = new MemoryStream();
         var buffer = new byte[81920];
@@ -246,7 +254,18 @@ public sealed class IssueEvidenceService
             output.Write(buffer, 0, read);
         }
         var data = output.ToArray();
-        return data.Length == attachment.Size && DetectedMediaType(data) == attachment.ContentType ? data : null;
+        var detected = DetectedMediaType(data);
+        return detected == contentType ? (data, detected) : null;
+    }
+
+    // Bound to the exact type Discord declared for this attachment, not just any allowed image
+    // type - otherwise the served/detected bytes could be misdeclared in the evidence payload's
+    // media_type (which is taken from attachment.ContentType, not from what was actually served).
+    internal async Task<byte[]?> DownloadImage(IAttachment attachment, CancellationToken cancellationToken)
+    {
+        var result = await DownloadIssueImage(attachment.Url, cancellationToken);
+        return result != null && result.Value.Data.Length == attachment.Size && result.Value.MediaType == attachment.ContentType
+            ? result.Value.Data : null;
     }
 
     private static string BoundUtf8(string value, int limit, out int omitted)
@@ -289,7 +308,7 @@ public sealed class IssueEvidenceService
     };
 
     internal sealed record BindingPayload(int Version, string Repository, long IssueNumber, string GuildId,
-        string ChannelId, string MessageId, string? RecipientId, string CreatedAt, string Nonce);
+        string ChannelId, string MessageId, string? RecipientId, string? SourceKind, string CreatedAt, string Nonce);
     private sealed record BindingEnvelope(string Payload, string Signature);
     private sealed record CursorPayload(int Version, string BindingSha256, string After, int Seen);
 }

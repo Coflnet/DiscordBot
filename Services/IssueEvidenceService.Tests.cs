@@ -1,5 +1,8 @@
+using System.Net;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using Discord;
 using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
 
@@ -146,6 +149,150 @@ public sealed class IssueEvidenceServiceTests
             Assert.That(DiscordHandler.IsExactDirectMessageEvidence(10, 7, 21, 7, 10, 7, 20), Is.False);
             Assert.That(DiscordHandler.IsExactDirectMessageEvidence(10, 7, 20, 8, 10, 7, 20), Is.False);
         });
+    }
+
+    [Test]
+    public void DirectMessageMirrorMustMatchChannelRecipientSourceAndBotAuthor()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(DiscordHandler.IsExactDirectMessageMirror(10, 7, 20, 99, 99, 10, 7, 20), Is.True);
+            Assert.That(DiscordHandler.IsExactDirectMessageMirror(11, 7, 20, 99, 99, 10, 7, 20), Is.False); // wrong channel
+            Assert.That(DiscordHandler.IsExactDirectMessageMirror(10, 8, 20, 99, 99, 10, 7, 20), Is.False); // wrong recipient
+            Assert.That(DiscordHandler.IsExactDirectMessageMirror(10, 7, 21, 99, 99, 10, 7, 20), Is.False); // wrong source
+            Assert.That(DiscordHandler.IsExactDirectMessageMirror(10, 7, 20, 7, 99, 10, 7, 20), Is.False); // author is the operator, not the bot
+        });
+    }
+
+    [Test]
+    public void BotDmMirrorSourceKindOnlyAcceptedForADirectMessageWithARecipient()
+    {
+        var service = Service();
+        // Wrong pairing: bot-dm-mirror requires guildId 0 and a non-zero recipient.
+        Assert.Throws<InvalidOperationException>(() => service.CreateBinding("Coflnet/SkyModCommands", 434,
+            IssueEvidenceService.CoflnetGuildId, 1535522079699509299, 1540607865847418932, 0, "bot-dm-mirror"));
+        // Unknown source kinds are rejected outright.
+        Assert.Throws<InvalidOperationException>(() => service.CreateBinding("Coflnet/SkyModCommands", 434,
+            0, 1535522079699509299, 1540607865847418932, 267680402594988033, "something-else"));
+
+        var binding = service.CreateBinding("Coflnet/SkyModCommands", 434, 0, 1535522079699509299,
+            1540607865847418932, 267680402594988033, "bot-dm-mirror");
+        var payload = service.ValidateBinding(binding, "Coflnet/SkyModCommands", 434);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload.SourceKind, Is.EqualTo("bot-dm-mirror"));
+            Assert.That(payload.RecipientId, Is.EqualTo("267680402594988033"));
+        });
+    }
+
+    [Test]
+    public async Task DownloadIssueImageRejectsContentTypeMismatch()
+    {
+        var service = ServiceWithHttpResponse(StubResponse("image/svg+xml", Png));
+
+        Assert.That(await service.DownloadIssueImage("https://cdn.discordapp.com/x.png", CancellationToken.None), Is.Null);
+    }
+
+    [Test]
+    public async Task DownloadIssueImageRejectsOversizeBody()
+    {
+        var response = StubResponse("image/png", Png);
+        response.Content.Headers.ContentLength = (10 << 20) + 1;
+        var service = ServiceWithHttpResponse(response);
+
+        Assert.That(await service.DownloadIssueImage("https://cdn.discordapp.com/x.png", CancellationToken.None), Is.Null);
+    }
+
+    [Test]
+    public async Task DownloadIssueImageRejectsMagicByteMismatch()
+    {
+        var service = ServiceWithHttpResponse(StubResponse("image/png", new byte[] { 1, 2, 3, 4 }));
+
+        Assert.That(await service.DownloadIssueImage("https://cdn.discordapp.com/x.png", CancellationToken.None), Is.Null);
+    }
+
+    [Test]
+    public async Task DownloadIssueImageAcceptsAMatchingImage()
+    {
+        var service = ServiceWithHttpResponse(StubResponse("image/png", Png));
+
+        var result = await service.DownloadIssueImage("https://cdn.discordapp.com/x.png", CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result!.Value.MediaType, Is.EqualTo("image/png"));
+            Assert.That(result.Value.Data, Is.EqualTo(Png));
+        });
+    }
+
+    [Test]
+    public async Task DownloadImageRejectsServedTypeThatDiffersFromTheDeclaredAttachmentType()
+    {
+        // Served bytes are a valid, correctly-detected PNG - but Discord declared this attachment
+        // as a JPEG. Fetch reports attachment.ContentType (not what was actually served) as the
+        // payload's media_type, so accepting this would let the evidence payload misdeclare its
+        // own bytes - exactly the provenance property DownloadImage exists to guarantee.
+        var service = ServiceWithHttpResponse(StubResponse("image/png", Png));
+        var attachment = new StubAttachment { ContentType = "image/jpeg", Size = Png.Length, Url = "https://cdn.discordapp.com/x.png" };
+
+        Assert.That(await service.DownloadImage(attachment, CancellationToken.None), Is.Null);
+    }
+
+    [Test]
+    public async Task DownloadImageAcceptsAMatchingDeclaredType()
+    {
+        var service = ServiceWithHttpResponse(StubResponse("image/png", Png));
+        var attachment = new StubAttachment { ContentType = "image/png", Size = Png.Length, Url = "https://cdn.discordapp.com/x.png" };
+
+        Assert.That(await service.DownloadImage(attachment, CancellationToken.None), Is.EqualTo(Png));
+    }
+
+    private static readonly byte[] Png = { 137, 80, 78, 71, 13, 10, 26, 10, 0, 0 };
+
+    private static HttpResponseMessage StubResponse(string contentType, byte[] body)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
+        response.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+        return response;
+    }
+
+    private static IssueEvidenceService ServiceWithHttpResponse(HttpResponseMessage response) => new(
+        BindingKey, ClientKey, null!, new StubHttpClientFactory(response), NullLogger<IssueEvidenceService>.Instance, () => Now);
+
+    private sealed class StubHttpClientFactory(HttpResponseMessage response) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(new StubHttpMessageHandler(response));
+    }
+
+    private sealed class StubHttpMessageHandler(HttpResponseMessage response) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(response);
+    }
+
+    // Minimal IAttachment stub - only DownloadImage's own fields (Url, Size, ContentType) matter here.
+    private sealed class StubAttachment : IAttachment
+    {
+        public ulong Id => 0;
+        public DateTimeOffset CreatedAt => default;
+        public string Filename { get; init; } = "image.png";
+        public required string Url { get; init; }
+        public string ProxyUrl => "";
+        public required int Size { get; init; }
+        public int? Height => null;
+        public int? Width => null;
+        public bool Ephemeral => false;
+        public string Description => "";
+        public required string ContentType { get; init; }
+        public double? Duration => null;
+        public string Waveform => "";
+        public byte[] WaveformBytes => Array.Empty<byte>();
+        public AttachmentFlags Flags => AttachmentFlags.None;
+        public IReadOnlyCollection<IUser> ClipParticipants => Array.Empty<IUser>();
+        public string Title => "";
+        public DateTimeOffset? ClipCreatedAt => null;
     }
 
     private static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');

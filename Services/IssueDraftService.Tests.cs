@@ -23,6 +23,42 @@ public class IssueDraftServiceTests
     }
 
     [Test]
+    public void SourceUrlMustBeBlankOrAnExactMessageLink()
+    {
+        var now = DateTimeOffset.Parse("2026-08-22T00:00:00Z");
+        var next = 0;
+        var service = new IssueDraftService(() => now, () => Enumerable.Repeat((byte)++next, 18).ToArray());
+        const string link = "https://discord.com/channels/@me/1535522079699509299/1540607865847418932";
+
+        var token = service.Create("title", "SkyModCommands", "details", 7, 8, 9, link);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(service.Peek(token, 7, 8, 9).SourceUrl, Is.EqualTo(link));
+            Assert.Throws<IssueDraftDenied>(() => service.Create("title", "SkyModCommands", "details", 7, 8, 9, "not-a-link"));
+        });
+    }
+
+    [Test]
+    public void AttachedImageUrlMustBeBlankOrAPublicIssueImageLink()
+    {
+        var now = DateTimeOffset.Parse("2026-08-22T00:00:00Z");
+        var next = 0;
+        var service = new IssueDraftService(() => now, () => Enumerable.Repeat((byte)++next, 18).ToArray());
+        const string image = "https://cdn.discordapp.com/attachments/12345678901234567/23456789012345678/report.png";
+
+        var token = service.Create("title", "SkyModCommands", "details", 7, 8, 9, attachedImageUrl: image);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(service.Peek(token, 7, 8, 9).AttachedImageUrl, Is.EqualTo(image));
+            Assert.Throws<IssueDraftDenied>(() => service.Create("title", "SkyModCommands", "details", 7, 8, 9, attachedImageUrl: "not-a-url"));
+            Assert.Throws<IssueDraftDenied>(() => service.Create("title", "SkyModCommands", "details", 7, 8, 9,
+                attachedImageUrl: "https://cdn.discordapp.com/attachments/12345678901234567/23456789012345678/report.svg"));
+        });
+    }
+
+    [Test]
     public void DraftExpiresAndCapacityIsBounded()
     {
         var now = DateTimeOffset.Parse("2026-08-22T00:00:00Z");

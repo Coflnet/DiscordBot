@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 public sealed class IssueDraftService
 {
     internal const int MaxPending = 128;
-    internal static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(5);
+    internal static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
     private static readonly Regex Repository = new(@"^[A-Za-z0-9_.-]{1,100}$", RegexOptions.CultureInvariant);
     private static readonly Regex Token = new(@"^[A-Za-z0-9_-]{24}$", RegexOptions.CultureInvariant);
     private readonly Dictionary<string, IssueDraft> pending = new(StringComparer.Ordinal);
@@ -20,10 +20,13 @@ public sealed class IssueDraftService
         this.random = random;
     }
 
-    public string Create(string title, string repository, string body, ulong userId, ulong guildId, ulong channelId)
+    public string Create(string title, string repository, string body, ulong userId, ulong guildId, ulong channelId,
+        string sourceUrl = "", string attachedImageUrl = "")
     {
         if (string.IsNullOrWhiteSpace(title) || title.Length > 256 || !Repository.IsMatch(repository)
-            || body.Length > 64 << 10 || userId == 0 || channelId == 0)
+            || body.Length > 64 << 10 || userId == 0 || channelId == 0
+            || (sourceUrl.Length != 0 && !GithubCommands.DiscordMessageLink.IsMatch(sourceUrl))
+            || (attachedImageUrl.Length != 0 && !GithubCommands.IsPastedIssueImageUrl(attachedImageUrl)))
             throw new IssueDraftDenied("invalid_draft");
         lock (gate)
         {
@@ -33,7 +36,7 @@ public sealed class IssueDraftService
             var token = Base64Url(random());
             if (!Token.IsMatch(token) || pending.ContainsKey(token))
                 throw new IssueDraftDenied("invalid_draft_token");
-            pending[token] = new(title, repository, body, userId, guildId, channelId, now().Add(Lifetime));
+            pending[token] = new(title, repository, body, userId, guildId, channelId, sourceUrl, attachedImageUrl, now().Add(Lifetime));
             return token;
         }
     }
@@ -66,6 +69,6 @@ public sealed class IssueDraftService
     private static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
 
-public sealed record IssueDraft(string Title, string Repository, string Body, ulong UserId, ulong GuildId, ulong ChannelId, DateTimeOffset ExpiresAt);
+public sealed record IssueDraft(string Title, string Repository, string Body, ulong UserId, ulong GuildId, ulong ChannelId, string SourceUrl, string AttachedImageUrl, DateTimeOffset ExpiresAt);
 
 public sealed class IssueDraftDenied(string reason) : Exception(reason);

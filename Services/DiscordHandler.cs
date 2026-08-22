@@ -165,7 +165,7 @@ public class DiscordHandler : BackgroundService
     }
 
     public async Task<IReadOnlyList<IMessage>> GetExactEvidenceMessages(ulong guildId, ulong channelId,
-        ulong sourceMessageId, ulong recipientId, ulong afterMessageId, int limit)
+        ulong sourceMessageId, ulong recipientId, string sourceKind, ulong afterMessageId, int limit)
     {
         if (client == null || limit is < 1 or > IssueEvidenceService.MaxMessages
             || await client.GetChannelAsync(channelId) is not IMessageChannel channel)
@@ -175,9 +175,18 @@ public class DiscordHandler : BackgroundService
             if (channel is not IDMChannel directMessage || directMessage.Recipient.Id != recipientId)
                 throw new EvidenceDenied("bound_dm_recipient_mismatch");
             var directSource = await channel.GetMessageAsync(sourceMessageId);
-            if (directSource == null || directSource.Author.IsBot || directSource.Author.IsWebhook
-                || !IsExactDirectMessageEvidence(channel.Id, directMessage.Recipient.Id, directSource.Id,
-                    directSource.Author.Id, channelId, recipientId, sourceMessageId))
+            var isMirror = sourceKind == "bot-dm-mirror";
+            // A bot-authored mirror is authorized purely via the binding (it was created by this
+            // code, for this recipient, right before the binding); an operator-authored source
+            // still must not be a bot/webhook message.
+            if (directSource == null || (!isMirror && (directSource.Author.IsBot || directSource.Author.IsWebhook)))
+                throw new EvidenceDenied("bound_dm_source_mismatch");
+            var authorized = isMirror
+                ? IsExactDirectMessageMirror(channel.Id, directMessage.Recipient.Id, directSource.Id,
+                    directSource.Author.Id, client.CurrentUser.Id, channelId, recipientId, sourceMessageId)
+                : IsExactDirectMessageEvidence(channel.Id, directMessage.Recipient.Id, directSource.Id,
+                    directSource.Author.Id, channelId, recipientId, sourceMessageId);
+            if (!authorized)
                 throw new EvidenceDenied("bound_dm_source_mismatch");
             return afterMessageId == 0 ? [directSource] : [];
         }
@@ -221,6 +230,75 @@ public class DiscordHandler : BackgroundService
         ulong actualSourceAuthorId, ulong boundChannelId, ulong boundRecipientId, ulong boundSourceId) =>
         actualChannelId == boundChannelId && actualRecipientId == boundRecipientId && actualSourceId == boundSourceId
         && actualSourceAuthorId == boundRecipientId;
+
+    // Same shape as IsExactDirectMessageEvidence, but for a bot-authored mirror message: the
+    // source must have been authored by the bot itself rather than by the recipient.
+    internal static bool IsExactDirectMessageMirror(ulong actualChannelId, ulong actualRecipientId, ulong actualSourceId,
+        ulong actualSourceAuthorId, ulong botUserId, ulong boundChannelId, ulong boundRecipientId, ulong boundSourceId) =>
+        actualChannelId == boundChannelId && actualRecipientId == boundRecipientId && actualSourceId == boundSourceId
+        && actualSourceAuthorId == botUserId;
+
+    private const int MaxMirrorTotalImageBytes = 20 << 20; // Discord's per-message cap is 25 MiB; leave headroom.
+    private const int MirrorMessageContentLimit = 2000;
+
+    /// <summary>
+    /// Mirrors operator-supplied evidence images into the bot's own DM with <paramref name="userId"/>.
+    /// The resulting message is bot-owned and re-readable forever (unlike a pasted CDN link, which
+    /// expires), so it can be used as a stable evidence source. Bounds images defensively (count,
+    /// per-image size, total size) even though callers are expected to pre-validate; oversized/excess
+    /// images are silently dropped and only logged, since this method's return type has no room to
+    /// report a skip count back to the caller.
+    /// </summary>
+    public async Task<IUserMessage?> MirrorIssueEvidence(ulong userId, string content,
+        IReadOnlyList<(string Name, byte[] Data, string MediaType)> images)
+    {
+        if (client == null)
+            return null;
+        try
+        {
+            if (await client.GetUserAsync(userId) is not { } user)
+                return null;
+            var dm = await user.CreateDMChannelAsync();
+
+            var bounded = new List<(string Name, byte[] Data, string MediaType)>();
+            long total = 0;
+            var skipped = 0;
+            foreach (var image in images)
+            {
+                if (bounded.Count >= GithubCommands.MaxPublicIssueImages || image.Data.Length > GithubCommands.MaxPublicIssueImageBytes
+                    || total + image.Data.Length > MaxMirrorTotalImageBytes)
+                {
+                    skipped++;
+                    continue;
+                }
+                bounded.Add(image);
+                total += image.Data.Length;
+            }
+            if (skipped > 0)
+                logger.LogInformation("Skipped {skipped} oversized/excess image(s) while mirroring issue evidence for user {userId}", skipped, userId);
+
+            var text = content.Length > MirrorMessageContentLimit ? content[..MirrorMessageContentLimit] : content;
+            if (bounded.Count == 0)
+                return await dm.SendMessageAsync(string.IsNullOrEmpty(text) ? "(no additional details provided)" : text);
+
+            var streams = bounded.Select(image => new MemoryStream(image.Data)).ToList();
+            try
+            {
+                var attachments = streams.Zip(bounded, (stream, image) => new FileAttachment(stream, image.Name)).ToList();
+                return await dm.SendFilesAsync(attachments, text);
+            }
+            finally
+            {
+                foreach (var stream in streams)
+                    stream.Dispose();
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to mirror issue evidence into user {userId}'s DM", userId);
+            return null;
+        }
+    }
 
     internal static (int Prior, int Later) EvidenceThreadWindowLimits(int limit, bool sourceIsInThread)
     {

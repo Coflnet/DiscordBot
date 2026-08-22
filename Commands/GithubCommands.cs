@@ -13,23 +13,26 @@ public class GithubCommands : InteractionModuleBase
     ILogger<GithubCommands> logger;
     IssueEvidenceService evidence;
     IssueDraftService drafts;
-    const int MaxPublicIssueImages = 3;
-    const int MaxPublicIssueImageBytes = 10 << 20;
+    DiscordHandler discord;
+    internal const int MaxPublicIssueImages = 3;
+    internal const int MaxPublicIssueImageBytes = 10 << 20;
     const int MaxIssueSourceMessages = 25;
     static readonly Regex DiscordAttachmentPath = new(@"^/attachments/[0-9]{17,20}/[0-9]{17,20}/[^/?#\x00-\x20]{1,768}$", RegexOptions.CultureInvariant);
     static readonly Regex DiscordAttachmentQuery = new(@"^\?ex=[0-9a-f]{8}&is=[0-9a-f]{8}&hm=[0-9a-f]{64}$", RegexOptions.CultureInvariant);
-    static readonly Regex DiscordMessageLink = new(@"^https://discord\.com/channels/(?<guild>@me|[0-9]{17,20})/(?<channel>[0-9]{17,20})/(?<message>[0-9]{17,20})$", RegexOptions.CultureInvariant);
+    internal static readonly Regex DiscordMessageLink = new(@"^https://discord\.com/channels/(?<guild>@me|[0-9]{17,20})/(?<channel>[0-9]{17,20})/(?<message>[0-9]{17,20})$", RegexOptions.CultureInvariant);
     static readonly HashSet<string> PublicIssueImageTypes = new(StringComparer.OrdinalIgnoreCase) { "image/png", "image/jpeg", "image/gif" };
+    static readonly HashSet<string> PastedIssueImageExtensions = new(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".gif" };
     static readonly HashSet<string> PublicIssueImageRepositories = new(StringComparer.OrdinalIgnoreCase) { "SkyApi", "SkyModCommands", "SkySniper" };
 
     public GithubCommands(GitHubClient github, Octokit.GraphQL.Connection connection, ILogger<GithubCommands> logger,
-        IssueEvidenceService evidence, IssueDraftService drafts)
+        IssueEvidenceService evidence, IssueDraftService drafts, DiscordHandler discord)
     {
         this.github = github;
         this.connection = connection;
         this.logger = logger;
         this.evidence = evidence;
         this.drafts = drafts;
+        this.discord = discord;
     }
 
     [SlashCommand("issue", "Creates a github issue", true)]
@@ -38,7 +41,8 @@ public class GithubCommands : InteractionModuleBase
     public async Task Issue([Summary("title", "Title of the issue")] string title,
         [Summary("repo", "Repository to create the issue in"), Autocomplete<GitRepoAutocompleteHandler>()] string repo,
         [Summary("body", "Body of the issue")] string body = "",
-        [Summary("message", "Issue details, or an exact Discord report message link")] string message = "")
+        [Summary("message", "Issue details, or an exact Discord report message link")] string message = "",
+        [Summary("image", "Screenshot to include in the issue")] IAttachment? image = null)
     {
         try
         {
@@ -55,17 +59,13 @@ public class GithubCommands : InteractionModuleBase
             await FollowupAsync("This can currently only be executed if you connected your Github account");
             return;
         }
-        if (PublicIssueImageRepositories.Contains(repo) && !evidence.IsConfigured)
-        {
-            await FollowupAsync("Discord issue evidence is not configured; no issue was created.", ephemeral: true);
-            return;
-        }
         bool canread = false;
         ulong reportGuildId = 0;
         ulong reportChannelId = 0;
         ulong reportMessageId = 0;
         var resolvedInput = ResolveMessageInput(body, message, Context.Interaction.GuildId, Context.Interaction.ChannelId);
         body = resolvedInput.Body;
+        IMessage? reportMessage = null;
         try
         {
             if (callingChannel == null)
@@ -87,7 +87,6 @@ public class GithubCommands : InteractionModuleBase
                     throw new Exception("Private issue sources must be the invoking user's one-to-one bot DM");
                 directMessageSource = true;
             }
-            IMessage? reportMessage;
             if (resolvedInput.MessageId != null)
             {
                 reportMessage = await reportChannel.GetMessageAsync(resolvedInput.MessageId.Value);
@@ -107,9 +106,36 @@ public class GithubCommands : InteractionModuleBase
             reportGuildId = directMessageSource ? 0 : Context.Interaction.GuildId ?? 0;
             reportChannelId = reportChannel.Id;
             reportMessageId = reportMessage.Id;
-            body = AppendIssueContext(body, repo, reportMessage.GetJumpUrl(), reportMessage.Attachments
-                .Select(attachment => ((long)attachment.Size, (string?)attachment.ContentType, attachment.Url)));
             canread = true;
+        }
+        catch (Exception e) when (resolvedInput.MessageId != null)
+        {
+            // The bot has no access to the channel/DM holding the linked message (e.g. a DM between
+            // the operator and a third party) - a permanent Discord limitation, not something a retry
+            // or a different fetch path can work around. The operator did supply an exact link though,
+            // so let them paste the content instead of losing the issue.
+            logger.LogInformation("Issue source message could not be read: {Category}", e.GetType().Name);
+            // Carry the image: attachment (if any) forward - it's the best evidence input available
+            // here (no copy-link step, no expiry) and must not be silently dropped.
+            var attachedImageUrl = image != null && IsPublicIssueImage((long)image.Size, image.ContentType, image.Url) ? image.Url : "";
+            try
+            {
+                var token = drafts.Create(title, repo, body, Context.User.Id,
+                    Context.Interaction.GuildId ?? 0, Context.Interaction.ChannelId ?? 0, message, attachedImageUrl);
+                var components = new ComponentBuilder()
+                    .WithButton("Add report content", $"issue-content:{token}", ButtonStyle.Primary)
+                    .Build();
+                var prompt = attachedImageUrl.Length != 0
+                    ? "I could not read that message (the bot is not in this DM). Your attached image will be included as evidence - add the report text and any further image links."
+                    : "I could not read that message (the bot is not in this DM). Paste the report text and any image links and I'll put them in the issue.";
+                await FollowupAsync(prompt, components: components, ephemeral: true);
+            }
+            catch (IssueDraftDenied denied)
+            {
+                logger.LogWarning("Issue draft could not be created: {Category}", denied.Message);
+                await FollowupAsync("I could not preserve this issue draft. Run `/issue` again.", ephemeral: true);
+            }
+            return;
         }
         catch (Exception e)
         {
@@ -130,9 +156,35 @@ public class GithubCommands : InteractionModuleBase
             }
             return;
         }
-        if (PublicIssueImageRepositories.Contains(repo) && !IssueEvidenceService.IsAllowedIssueSource("Coflnet/" + repo, reportGuildId))
+        // The source message was read directly (Coflnet-server or the operator's own bot DM), so the
+        // binding stays on that message as before. image: is scoped to the unreadable/paste-flow
+        // mirror path only - do not silently drop it here, tell the operator it was not used.
+        var readableSourceNotes = image != null
+            ? new[] { "The linked report message remains the evidence source; the attached image was not included." }
+            : null;
+        var harvestedAttachments = reportMessage!.Attachments
+            .Select(attachment => ((long)attachment.Size, (string?)attachment.ContentType, attachment.Url));
+        await CreateIssue(title, repo, body, reportMessage.GetJumpUrl(), harvestedAttachments, Enumerable.Empty<string>(),
+            reportGuildId, reportChannelId, reportMessageId, Context.User.Id, canread, extraNotes: readableSourceNotes);
+    }
+
+    // Shared by the direct (readable source) path and the "add report content" modal path
+    // (unreadable source, reportGuildId/reportChannelId/reportMessageId all 0, canread false).
+    private async Task CreateIssue(string title, string repo, string body, string contextUrl,
+        IEnumerable<(long Size, string? ContentType, string Url)> harvestedAttachments, IEnumerable<string> attachedUrls,
+        ulong reportGuildId, ulong reportChannelId, ulong reportMessageId, ulong invokingUserId, bool canread,
+        string? sourceKind = null, IEnumerable<string>? extraNotes = null)
+    {
+        // Single choke point for the final image URLs: resolving harvested attachments and
+        // operator-attached URLs separately (rather than inline here) is where a future download +
+        // re-host-on-GitHub step slots in, since Discord CDN links expire after ~24h.
+        var harvestedUrls = ResolveHarvestedImageUrls(harvestedAttachments);
+        var resolvedAttachedUrls = ResolveAttachedImageUrls(attachedUrls);
+        body = AppendIssueContext(body, repo, contextUrl, harvestedUrls, resolvedAttachedUrls);
+        var canBind = CanBindEvidence("Coflnet/" + repo, reportGuildId, reportMessageId);
+        if (canBind && !evidence.IsConfigured)
         {
-            await FollowupAsync("Issue evidence is accepted only from the Coflnet server; no issue was created.", ephemeral: true);
+            await FollowupAsync("Discord issue evidence is not configured; no issue was created.", ephemeral: true);
             return;
         }
         body = body.Replace("https://discord.com/channels//", "https://discord.com/channels/@me/"); // dm messages
@@ -144,10 +196,10 @@ public class GithubCommands : InteractionModuleBase
         {
             var issue = await github.Issue.Create("Coflnet", repo, newIssue);
 
-            if (PublicIssueImageRepositories.Contains(repo))
+            if (canBind)
             {
                 var binding = evidence.CreateBinding("Coflnet/" + repo, issue.Number, reportGuildId, reportChannelId,
-                    reportMessageId, reportGuildId == 0 ? Context.User.Id : 0);
+                    reportMessageId, reportGuildId == 0 ? invokingUserId : 0, sourceKind);
                 var marker = $"<!-- coflnet-discord-evidence:v1 binding={binding} -->";
                 body += "\n" + marker;
                 await FinalizeEvidenceMarker(
@@ -165,10 +217,15 @@ public class GithubCommands : InteractionModuleBase
 
             // assign issue onto first project board in organization with memex
             await PutIssueOnBoard(issue.NodeId);
-            
+
+            var description = $"Issue created at https://github.com/Coflnet/{repo}/issues/{issue.Number}";
+            if (PublicIssueImageRepositories.Contains(repo) && !canBind)
+                description += "\nDiscord evidence was not attached.";
+            foreach (var note in extraNotes ?? Enumerable.Empty<string>())
+                description += "\n" + note;
             await FollowupAsync("", embed: new EmbedBuilder()
                 .WithTitle("Issue created")
-                .WithDescription($"Issue created at https://github.com/Coflnet/{repo}/issues/{issue.Number}")
+                .WithDescription(description)
                 .WithColor(Color.Green)
                 .Build(), ephemeral: !canread);
         }
@@ -189,8 +246,10 @@ public class GithubCommands : InteractionModuleBase
             Console.WriteLine(e);
             throw;
         }
-
     }
+
+    internal static bool CanBindEvidence(string repository, ulong guildId, ulong messageId)
+        => messageId != 0 && IssueEvidenceService.IsAllowedIssueSource(repository, guildId);
 
     internal static async Task FinalizeEvidenceMarker(Func<Task> update, Func<Task<string?>> reread,
         Func<Task> close, string marker)
@@ -232,17 +291,36 @@ public class GithubCommands : InteractionModuleBase
 
     internal static bool IsPublicIssueImage(long size, string? contentType, string url)
     {
-        if (size <= 0 || size > MaxPublicIssueImageBytes || !PublicIssueImageTypes.Contains(contentType ?? "")
-            || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
+        if (size <= 0 || size > MaxPublicIssueImageBytes || !PublicIssueImageTypes.Contains(contentType ?? ""))
+            return false;
+        return IsDiscordAttachmentUrl(url, out _);
+    }
+
+    // Pasted links (from a modal) carry no size/content-type, so the file extension stands in for
+    // the PublicIssueImageTypes check.
+    internal static bool IsPastedIssueImageUrl(string url) =>
+        IsDiscordAttachmentUrl(url, out var filename) && PastedIssueImageExtensions.Contains(Path.GetExtension(filename));
+
+    private static bool IsDiscordAttachmentUrl(string url, out string filename)
+    {
+        filename = "";
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
             || !string.Equals(uri.Authority, "cdn.discordapp.com", StringComparison.Ordinal)
             || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 || !DiscordAttachmentPath.IsMatch(uri.AbsolutePath))
             return false;
         if (uri.Query.Length != 0 && !DiscordAttachmentQuery.IsMatch(uri.Query))
             return false;
-        var filename = Uri.UnescapeDataString(uri.AbsolutePath[(uri.AbsolutePath.LastIndexOf('/') + 1)..]);
+        filename = Uri.UnescapeDataString(uri.AbsolutePath[(uri.AbsolutePath.LastIndexOf('/') + 1)..]);
         return filename is not "." and not ".." && filename.Length <= 255 && !filename.Contains('/') && !filename.Contains('\\')
             && !filename.Any(character => char.IsControl(character));
     }
+
+    internal static IReadOnlyList<string> ParsePastedImageUrls(string value) =>
+        value.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Where(IsPastedIssueImageUrl)
+            .Distinct(StringComparer.Ordinal)
+            .Take(MaxPublicIssueImages)
+            .ToList();
 
     internal static ulong? ExactMessageId(string url, ulong? guildId, ulong? channelId)
     {
@@ -282,17 +360,50 @@ public class GithubCommands : InteractionModuleBase
         return null;
     }
 
-    internal static string AppendIssueContext(string body, string repository, string jumpUrl, IEnumerable<(long Size, string? ContentType, string Url)> attachments)
+    // Resolves harvested report-message attachments to the final image URLs used in the issue body.
+    // Today this only validates and passes the Discord CDN URL through; because those links expire,
+    // this is where a future download + re-host-on-GitHub step slots in without touching the
+    // repo-gating/rendering logic in AppendIssueContext.
+    internal static IReadOnlyList<string> ResolveHarvestedImageUrls(IEnumerable<(long Size, string? ContentType, string Url)> attachments) =>
+        attachments.Where(attachment => IsPublicIssueImage(attachment.Size, attachment.ContentType, attachment.Url))
+            .Select(attachment => attachment.Url).ToList();
+
+    // Resolves operator-supplied image URLs (the image: option, or pasted links) the same way.
+    internal static IReadOnlyList<string> ResolveAttachedImageUrls(IEnumerable<string> urls) =>
+        urls.Where(IsPastedIssueImageUrl).ToList();
+
+    // A pasted-link download does an outbound HTTP call (IssueEvidenceService.DownloadIssueImage)
+    // that can throw (timeout, connection reset, ...). By the time this runs the draft has already
+    // been consumed, so a throw must never escape here - it has to be treated exactly like a
+    // rejected/expired link (null), not abort the whole issue-creation flow.
+    internal static async Task<(byte[] Data, string MediaType)?> TryDownloadIssueImage(
+        Func<string, CancellationToken, Task<(byte[] Data, string MediaType)?>> download, string url, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await download(url, cancellationToken);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    internal static string AppendIssueContext(string body, string repository, string jumpUrl,
+        IEnumerable<string> harvestedUrls, IEnumerable<string> attachedUrls)
     {
         body += "\ncontext:" + jumpUrl;
-        if (!PublicIssueImageRepositories.Contains(repository))
-            return body;
-        var imageUrls = attachments
-            .Where(attachment => IsPublicIssueImage(attachment.Size, attachment.ContentType, attachment.Url))
-            .Select(attachment => attachment.Url)
-            .Distinct(StringComparer.Ordinal)
-            .Take(MaxPublicIssueImages);
-        return body + string.Concat(imageUrls.Select((imageUrl, index) => $"\n![Discord issue image {index + 1}]({imageUrl})"));
+        // Explicit attachments count for any repo - the operator deliberately provided them. Harvested
+        // attachments stay restricted to the enrolled repos, as before. Attached-first ordering matters:
+        // with 3+ harvested images the attached one must still survive the Take(MaxPublicIssueImages) cap.
+        var candidateUrls = PublicIssueImageRepositories.Contains(repository) ? attachedUrls.Concat(harvestedUrls) : attachedUrls;
+        // No image URLs in the issue body - Discord CDN links rot after ~24h either way. Developers
+        // read the linked message directly; the DevServer pulls the bytes live via the evidence
+        // binding. Just record how many screenshots are available as evidence.
+        var count = candidateUrls.Distinct(StringComparer.Ordinal).Take(MaxPublicIssueImages).Count();
+        if (count > 0)
+            body += $"\n{count} screenshot{(count == 1 ? "" : "s")} attached as Discord evidence";
+        return body;
     }
 
     [ComponentInteraction("issue-source:*", true)]
@@ -351,6 +462,114 @@ public class GithubCommands : InteractionModuleBase
         [ModalTextInput("extra-details", TextInputStyle.Paragraph, "Optional extra details", 0, 2000)]
         [RequiredInput(false)]
         public string ExtraDetails { get; set; } = "";
+    }
+
+    [ComponentInteraction("issue-content:*", true)]
+    public async Task AddReportContent(string token)
+    {
+        try
+        {
+            drafts.Peek(token, Context.User.Id, Context.Interaction.GuildId ?? 0, Context.Interaction.ChannelId ?? 0);
+            if (Context.Interaction is not SocketMessageComponent component)
+                throw new IssueDraftDenied("invalid_component_context");
+            await component.RespondWithModalAsync<IssueReportContentModal>($"issue-content-modal:{token}");
+        }
+        catch (IssueDraftDenied)
+        {
+            await RespondAsync("This issue draft expired or belongs to a different user or channel. Run `/issue` again.", ephemeral: true);
+        }
+    }
+
+    [ModalInteraction("issue-content-modal:*", true)]
+    public async Task SubmitReportContent(string token, IssueReportContentModal modal)
+    {
+        try
+        {
+            var guildId = Context.Interaction.GuildId ?? 0;
+            var channelId = Context.Interaction.ChannelId ?? 0;
+            var draft = drafts.Take(token, Context.User.Id, guildId, channelId);
+            try
+            {
+                await DeferAsync(false);
+            }
+            catch (Exception e)
+            {
+                logger.LogError(e, "Error deferring interaction");
+                await DeferAsync(true);
+            }
+            // The draft is already consumed at this point, so from here on nothing may escape
+            // unhandled - that would leave the interaction dead with no way to recover the
+            // operator's title/body. Report a generic failure instead of throwing through.
+            try
+            {
+                var body = string.IsNullOrWhiteSpace(modal.Content)
+                    ? draft.Body
+                    : draft.Body + (string.IsNullOrWhiteSpace(draft.Body) ? "" : "\n\n") + modal.Content;
+
+                // The source message is unreadable, so there is no permanent place to point evidence
+                // at. Mirror any attached/pasted images into the bot's own (always-readable) DM with
+                // the operator, and bind evidence to that mirror instead. Only bother for repos
+                // evidence ever applies to. The draft's attached image (from the image: option) goes
+                // first, consistent with AppendIssueContext's attached-first ordering, so it survives
+                // the 3-image cap.
+                var notes = new List<string>();
+                IUserMessage? mirror = null;
+                var attachedUrls = Enumerable.Empty<string>();
+                if (PublicIssueImageRepositories.Contains(draft.Repository))
+                {
+                    var pastedUrls = ParsePastedImageUrls(modal.Images);
+                    var candidateUrls = (draft.AttachedImageUrl.Length != 0 ? new[] { draft.AttachedImageUrl } : Array.Empty<string>())
+                        .Concat(pastedUrls)
+                        .Distinct(StringComparer.Ordinal)
+                        .Take(MaxPublicIssueImages)
+                        .ToList();
+                    var downloaded = new List<(string Url, string Name, byte[] Data, string MediaType)>();
+                    foreach (var url in candidateUrls)
+                    {
+                        var download = await TryDownloadIssueImage(evidence.DownloadIssueImage, url, CancellationToken.None);
+                        if (download == null)
+                            continue;
+                        var extension = download.Value.MediaType switch { "image/jpeg" => "jpg", "image/gif" => "gif", _ => "png" };
+                        downloaded.Add((url, $"report-image-{downloaded.Count + 1}.{extension}", download.Value.Data, download.Value.MediaType));
+                    }
+                    var failedDownloads = candidateUrls.Count - downloaded.Count;
+                    var mirrorContent = string.IsNullOrWhiteSpace(modal.Content) ? "(no additional details provided)" : modal.Content;
+                    mirror = await discord.MirrorIssueEvidence(Context.User.Id, mirrorContent,
+                        downloaded.Select(image => (image.Name, image.Data, image.MediaType)).ToList());
+                    if (mirror == null)
+                        notes.Add("Could not create the Discord DM mirror for evidence (do you have DMs enabled from this bot?).");
+                    else if (failedDownloads > 0)
+                        notes.Add($"{failedDownloads} pasted image link(s) could not be downloaded (they may be older than ~24h) - re-copy them from Discord and try again if you'd like them attached.");
+                    if (mirror != null)
+                        attachedUrls = downloaded.Select(image => image.Url);
+                }
+                await CreateIssue(draft.Title, draft.Repository, body, draft.SourceUrl,
+                    Enumerable.Empty<(long Size, string? ContentType, string Url)>(), attachedUrls,
+                    0, mirror?.Channel.Id ?? 0, mirror?.Id ?? 0, Context.User.Id, false, "bot-dm-mirror", notes);
+            }
+            catch (Exception e)
+            {
+                logger.LogError(e, "Failed to create an issue from pasted report content in {Repo}", draft.Repository);
+                await FollowupAsync("Something went wrong while creating the issue from your pasted content. Check GitHub before running `/issue` again, in case it was partially created.", ephemeral: true);
+            }
+        }
+        catch (IssueDraftDenied)
+        {
+            await RespondAsync("This issue draft expired or was already submitted. Run `/issue` again.", ephemeral: true);
+        }
+    }
+
+    public sealed class IssueReportContentModal : IModal
+    {
+        public string Title => "Add report content";
+
+        [ModalTextInput("report-content", TextInputStyle.Paragraph, "Paste the report text", 0, 3000)]
+        [RequiredInput(false)]
+        public string Content { get; set; } = "";
+
+        [ModalTextInput("report-images", TextInputStyle.Paragraph, "Additional image links, one per line", 0, 1000)]
+        [RequiredInput(false)]
+        public string Images { get; set; } = "";
     }
 
     private async Task PutIssueOnBoard(string issueId)
