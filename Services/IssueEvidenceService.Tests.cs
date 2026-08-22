@@ -108,12 +108,40 @@ public sealed class IssueEvidenceServiceTests
         {
             Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/SkyModCommands", IssueEvidenceService.CoflnetGuildId), Is.True);
             Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/SkyModCommands", 0), Is.True);
-            Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/Other", IssueEvidenceService.CoflnetGuildId), Is.False);
+            Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/SkyModCommands", 999), Is.False);
+            // Any Coflnet repo is a valid target; anything outside the org (or a name that is not a
+            // plain repo name) is not.
+            Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/AnyOtherRepo", IssueEvidenceService.CoflnetGuildId), Is.True);
+            Assert.That(IssueEvidenceService.IsAllowedIssueSource("Someone/SkyModCommands", IssueEvidenceService.CoflnetGuildId), Is.False);
+            Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/Sky/Mod", IssueEvidenceService.CoflnetGuildId), Is.False);
+            Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/..", IssueEvidenceService.CoflnetGuildId), Is.False);
+            Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/", IssueEvidenceService.CoflnetGuildId), Is.False);
+            Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/Sky Mod", IssueEvidenceService.CoflnetGuildId), Is.False);
             Assert.That(DiscordHandler.IsExactAttachedThread(10, 20, 10, 20), Is.True);
             Assert.That(DiscordHandler.IsExactAttachedThread(10, 20, 11, 20), Is.False);
             Assert.That(DiscordHandler.IsExactAttachedThread(10, 20, 10, 21), Is.False);
             Assert.That(DiscordHandler.EvidenceThreadWindowLimits(10, true), Is.EqualTo((4, 5)));
             Assert.That(DiscordHandler.EvidenceThreadWindowLimits(10, false), Is.EqualTo((0, 9)));
+        });
+    }
+
+    // Regression: /issue repo:skymodcommands created issue #435 with no evidence binding, because
+    // the allow-list was matched ordinally while GitHub repository identity is case-insensitive.
+    // Any casing must bind, and must still resolve the binding on fetch.
+    [Test]
+    public void IssueSourceRepositoryCasingDoesNotBreakBinding()
+    {
+        var service = Service();
+        var binding = service.CreateBinding("Coflnet/skymodcommands", 435,
+            IssueEvidenceService.CoflnetGuildId, 1540537726070300805, 1540726822130557128);
+        Assert.Multiple(() =>
+        {
+            Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/skymodcommands", IssueEvidenceService.CoflnetGuildId), Is.True);
+            Assert.That(GithubCommands.CanBindEvidence("Coflnet/skymodcommands", IssueEvidenceService.CoflnetGuildId, 1540726822130557128), Is.True);
+            Assert.That(service.ValidateBinding(binding, "Coflnet/SkyModCommands", 435).MessageId, Is.EqualTo("1540726822130557128"));
+            Assert.That(service.ValidateBinding(binding, "Coflnet/skymodcommands", 435).MessageId, Is.EqualTo("1540726822130557128"));
+            Assert.Throws<EvidenceDenied>(() => service.ValidateBinding(binding, "Coflnet/SkyApi", 435));
+            Assert.Throws<EvidenceDenied>(() => service.ValidateBinding(binding, "Coflnet/Other", 435));
         });
     }
 

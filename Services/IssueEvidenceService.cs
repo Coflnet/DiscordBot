@@ -15,8 +15,12 @@ public sealed class IssueEvidenceService
     internal const int MaxImages = 5;
     internal const int MaxImageBytes = 10 << 20;
     internal const int MaxTotalImageBytes = 25 << 20;
-    private static readonly HashSet<string> Repositories = new(StringComparer.Ordinal)
-        { "Coflnet/SkyApi", "Coflnet/SkyModCommands", "Coflnet/SkySniper" };
+    // Any repository in the Coflnet org is a valid evidence target. What bounds the blast radius is
+    // the binding itself - it names one exact issue and one exact Discord message, and the fetch is
+    // separately authenticated with the client key - not an enumerated repo list, which only ever
+    // managed to silently drop evidence when a repo was not on it.
+    private static readonly Regex RepositoryName = new(@"^Coflnet/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static readonly Regex UserMention = new(@"<@!?(?<id>[0-9]{17,20})>", RegexOptions.CultureInvariant);
     private static readonly Regex RoleMention = new(@"<@&(?<id>[0-9]{17,20})>", RegexOptions.CultureInvariant);
     private static readonly Regex ChannelMention = new(@"<#(?<id>[0-9]{17,20})>", RegexOptions.CultureInvariant);
@@ -48,8 +52,10 @@ public sealed class IssueEvidenceService
 
     public bool IsConfigured => bindingKey.Length == 32 && clientKey.Length == 32;
 
+    internal static bool IsAllowedRepository(string repository) => RepositoryName.IsMatch(repository);
+
     internal static bool IsAllowedIssueSource(string repository, ulong guildId) =>
-        Repositories.Contains(repository) && guildId is 0 or CoflnetGuildId;
+        IsAllowedRepository(repository) && guildId is 0 or CoflnetGuildId;
 
     public string CreateBinding(string repository, long issueNumber, ulong guildId, ulong channelId, ulong messageId,
         ulong recipientId = 0, string? sourceKind = null)
@@ -86,8 +92,10 @@ public sealed class IssueEvidenceService
         BindingPayload? payload;
         try { payload = JsonSerializer.Deserialize<BindingPayload>(payloadBytes, JsonOptions); }
         catch { throw new EvidenceDenied("invalid_binding_payload"); }
-        if (payload == null || payload.Version != 1 || payload.Repository != repository || payload.IssueNumber != issueNumber
-            || !Repositories.Contains(payload.Repository) || !ulong.TryParse(payload.GuildId, out var guildId)
+        if (payload == null || payload.Version != 1 || payload.IssueNumber != issueNumber
+            || !IsAllowedRepository(payload.Repository)
+            || !string.Equals(payload.Repository, repository, StringComparison.OrdinalIgnoreCase)
+            || !ulong.TryParse(payload.GuildId, out var guildId)
             || guildId is not (0 or CoflnetGuildId)
             || !ulong.TryParse(payload.ChannelId, out var channel) || channel == 0
             || !ulong.TryParse(payload.MessageId, out var message) || message == 0

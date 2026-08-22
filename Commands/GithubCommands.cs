@@ -22,7 +22,6 @@ public class GithubCommands : InteractionModuleBase
     internal static readonly Regex DiscordMessageLink = new(@"^https://discord\.com/channels/(?<guild>@me|[0-9]{17,20})/(?<channel>[0-9]{17,20})/(?<message>[0-9]{17,20})$", RegexOptions.CultureInvariant);
     static readonly HashSet<string> PublicIssueImageTypes = new(StringComparer.OrdinalIgnoreCase) { "image/png", "image/jpeg", "image/gif" };
     static readonly HashSet<string> PastedIssueImageExtensions = new(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".gif" };
-    static readonly HashSet<string> PublicIssueImageRepositories = new(StringComparer.OrdinalIgnoreCase) { "SkyApi", "SkyModCommands", "SkySniper" };
 
     public GithubCommands(GitHubClient github, Octokit.GraphQL.Connection connection, ILogger<GithubCommands> logger,
         IssueEvidenceService evidence, IssueDraftService drafts, DiscordHandler discord)
@@ -219,7 +218,7 @@ public class GithubCommands : InteractionModuleBase
             await PutIssueOnBoard(issue.NodeId);
 
             var description = $"Issue created at https://github.com/Coflnet/{repo}/issues/{issue.Number}";
-            if (PublicIssueImageRepositories.Contains(repo) && !canBind)
+            if (EvidenceApplies(repo) && !canBind)
                 description += "\nDiscord evidence was not attached.";
             foreach (var note in extraNotes ?? Enumerable.Empty<string>())
                 description += "\n" + note;
@@ -250,6 +249,11 @@ public class GithubCommands : InteractionModuleBase
 
     internal static bool CanBindEvidence(string repository, ulong guildId, ulong messageId)
         => messageId != 0 && IssueEvidenceService.IsAllowedIssueSource(repository, guildId);
+
+    // Single source of truth for "does Discord evidence apply to this repo" - a second, separately
+    // spelled repo list here is what made /issue repo:skymodcommands create an unbound issue.
+    internal static bool EvidenceApplies(string repository)
+        => IssueEvidenceService.IsAllowedRepository("Coflnet/" + repository);
 
     internal static async Task FinalizeEvidenceMarker(Func<Task> update, Func<Task<string?>> reread,
         Func<Task> close, string marker)
@@ -393,10 +397,9 @@ public class GithubCommands : InteractionModuleBase
         IEnumerable<string> harvestedUrls, IEnumerable<string> attachedUrls)
     {
         body += "\ncontext:" + jumpUrl;
-        // Explicit attachments count for any repo - the operator deliberately provided them. Harvested
-        // attachments stay restricted to the enrolled repos, as before. Attached-first ordering matters:
-        // with 3+ harvested images the attached one must still survive the Take(MaxPublicIssueImages) cap.
-        var candidateUrls = PublicIssueImageRepositories.Contains(repository) ? attachedUrls.Concat(harvestedUrls) : attachedUrls;
+        // Attached-first ordering matters: with 3+ harvested images the operator's own attachment must
+        // still survive the Take(MaxPublicIssueImages) cap.
+        var candidateUrls = attachedUrls.Concat(harvestedUrls);
         // No image URLs in the issue body - Discord CDN links rot after ~24h either way. Developers
         // read the linked message directly; the DevServer pulls the bytes live via the evidence
         // binding. Just record how many screenshots are available as evidence.
@@ -515,7 +518,7 @@ public class GithubCommands : InteractionModuleBase
                 var notes = new List<string>();
                 IUserMessage? mirror = null;
                 var attachedUrls = Enumerable.Empty<string>();
-                if (PublicIssueImageRepositories.Contains(draft.Repository))
+                if (EvidenceApplies(draft.Repository))
                 {
                     var pastedUrls = ParsePastedImageUrls(modal.Images);
                     var candidateUrls = (draft.AttachedImageUrl.Length != 0 ? new[] { draft.AttachedImageUrl } : Array.Empty<string>())

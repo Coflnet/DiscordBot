@@ -204,7 +204,12 @@ public class GitRepoAutocompleteHandlerTests
             Assert.That(GithubCommands.CanBindEvidence("Coflnet/SkyModCommands", 0, 123), Is.True);
             Assert.That(GithubCommands.CanBindEvidence("Coflnet/SkyModCommands", coflnet, 123), Is.True);
             Assert.That(GithubCommands.CanBindEvidence("Coflnet/SkyModCommands", 999, 123), Is.False);
-            Assert.That(GithubCommands.CanBindEvidence("Coflnet/OtherRepo", coflnet, 123), Is.False);
+            // Every repo in the org counts; only targets outside it do not.
+            Assert.That(GithubCommands.CanBindEvidence("Coflnet/OtherRepo", coflnet, 123), Is.True);
+            Assert.That(GithubCommands.CanBindEvidence("Someone/SkyModCommands", coflnet, 123), Is.False);
+            Assert.That(GithubCommands.EvidenceApplies("SkyModCommands"), Is.True);
+            Assert.That(GithubCommands.EvidenceApplies("OtherRepo"), Is.True);
+            Assert.That(GithubCommands.EvidenceApplies("Other/Repo"), Is.False);
         });
     }
 
@@ -229,19 +234,19 @@ public class GitRepoAutocompleteHandlerTests
     }
 
     [Test]
-    public void AppendIssueContextCapsAtThreeDistinctImagesAndGatesHarvestedByRepo()
+    public void AppendIssueContextCapsAtThreeDistinctImagesAndNeverRendersThem()
     {
         var harvested = new[] { "img1", "img2", "img1", "img3", "img4" }.Select(name => DiscordImage.Replace("report.png", $"{name}.png"));
 
         var body = GithubCommands.AppendIssueContext("details", "SkyModCommands", "https://discord.com/channels/1/2/3", harvested, Enumerable.Empty<string>());
-        var unenrolled = GithubCommands.AppendIssueContext("details", "OtherRepo", "https://discord.com/channels/1/2/3", harvested, Enumerable.Empty<string>());
+        var withoutImages = GithubCommands.AppendIssueContext("details", "OtherRepo", "https://discord.com/channels/1/2/3", Enumerable.Empty<string>(), Enumerable.Empty<string>());
 
         Assert.Multiple(() =>
         {
             Assert.That(body, Does.Contain("context:https://discord.com/channels/1/2/3"));
             Assert.That(body, Does.Contain("3 screenshots attached as Discord evidence"));
             Assert.That(body, Does.Not.Contain("!["));
-            Assert.That(unenrolled, Does.Not.Contain("screenshot"));
+            Assert.That(withoutImages, Does.Not.Contain("screenshot"));
         });
     }
 
@@ -251,12 +256,12 @@ public class GitRepoAutocompleteHandlerTests
         const string attachedUrl = "https://cdn.discordapp.com/attachments/12345678901234567/23456789012345678/attached.png";
         var harvested = new[] { "h1", "h2", "h3" }.Select(name => DiscordImage.Replace("report.png", $"{name}.png"));
 
-        var unenrolled = GithubCommands.AppendIssueContext("details", "OtherRepo", "https://discord.com/channels/1/2/3", harvested, new[] { attachedUrl });
+        var attachedOnly = GithubCommands.AppendIssueContext("details", "OtherRepo", "https://discord.com/channels/1/2/3", Enumerable.Empty<string>(), new[] { attachedUrl });
         var capped = GithubCommands.AppendIssueContext("details", "SkyModCommands", "https://discord.com/channels/1/2/3", harvested, new[] { attachedUrl });
 
         Assert.Multiple(() =>
         {
-            Assert.That(unenrolled, Does.Contain("1 screenshot attached as Discord evidence"));
+            Assert.That(attachedOnly, Does.Contain("1 screenshot attached as Discord evidence"));
             Assert.That(capped, Does.Contain("3 screenshots attached as Discord evidence"));
             Assert.That(capped, Does.Not.Contain("!["));
             Assert.That(capped, Does.Not.Contain(attachedUrl));
