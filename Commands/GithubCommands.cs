@@ -70,10 +70,27 @@ public class GithubCommands : InteractionModuleBase
         {
             if (callingChannel == null)
                 throw new Exception("Calling channel is null");
+            IMessageChannel reportChannel = callingChannel;
+            var directMessageSource = resolvedInput.DirectMessageChannelId != null;
+            if (directMessageSource)
+            {
+                var linkedChannel = await Context.Client.GetChannelAsync(resolvedInput.DirectMessageChannelId!.Value);
+                if (linkedChannel is not IDMChannel directMessage
+                    || !IsAuthorizedDirectMessage(directMessage.Id, directMessage.Recipient.Id,
+                        resolvedInput.DirectMessageChannelId.Value, Context.User.Id))
+                    throw new Exception("Linked direct message channel is not the invoking user's bot DM");
+                reportChannel = directMessage;
+            }
+            else if (Context.Interaction.GuildId == null)
+            {
+                if (callingChannel is not IDMChannel directMessage || directMessage.Recipient.Id != Context.User.Id)
+                    throw new Exception("Private issue sources must be the invoking user's one-to-one bot DM");
+                directMessageSource = true;
+            }
             IMessage? reportMessage;
             if (resolvedInput.MessageId != null)
             {
-                reportMessage = await callingChannel.GetMessageAsync(resolvedInput.MessageId.Value);
+                reportMessage = await reportChannel.GetMessageAsync(resolvedInput.MessageId.Value);
             }
             else
             {
@@ -84,10 +101,11 @@ public class GithubCommands : InteractionModuleBase
                 var selectedReportId = SelectReportMessageId(candidates.Select(candidate => (candidate.Id, candidate.Author.Id, candidate.Author.IsBot, candidate.Author.IsWebhook)), Context.User.Id);
                 reportMessage = selectedReportId == null ? null : candidates.First(candidate => candidate.Id == selectedReportId);
             }
-            if (reportMessage == null || reportMessage.Author.IsBot || reportMessage.Author.IsWebhook)
+            if (reportMessage == null || reportMessage.Author.IsBot || reportMessage.Author.IsWebhook
+                || directMessageSource && reportMessage.Author.Id != Context.User.Id)
                 throw new Exception("No ordinary user report message was found in the bounded channel history");
-            reportGuildId = Context.Interaction.GuildId ?? 0;
-            reportChannelId = Context.Interaction.ChannelId ?? 0;
+            reportGuildId = directMessageSource ? 0 : Context.Interaction.GuildId ?? 0;
+            reportChannelId = reportChannel.Id;
             reportMessageId = reportMessage.Id;
             body = AppendIssueContext(body, repo, reportMessage.GetJumpUrl(), reportMessage.Attachments
                 .Select(attachment => ((long)attachment.Size, (string?)attachment.ContentType, attachment.Url)));
@@ -117,7 +135,7 @@ public class GithubCommands : InteractionModuleBase
             await FollowupAsync("Issue evidence is accepted only from the Coflnet server; no issue was created.", ephemeral: true);
             return;
         }
-        body = body.Replace(" https://discord.com/channels//", "https://discord.com/channels/@me/"); // dm messages
+        body = body.Replace("https://discord.com/channels//", "https://discord.com/channels/@me/"); // dm messages
         var newIssue = new NewIssue(title)
         {
             Body = body,
@@ -128,7 +146,8 @@ public class GithubCommands : InteractionModuleBase
 
             if (PublicIssueImageRepositories.Contains(repo))
             {
-                var binding = evidence.CreateBinding("Coflnet/" + repo, issue.Number, reportGuildId, reportChannelId, reportMessageId);
+                var binding = evidence.CreateBinding("Coflnet/" + repo, issue.Number, reportGuildId, reportChannelId,
+                    reportMessageId, reportGuildId == 0 ? Context.User.Id : 0);
                 var marker = $"<!-- coflnet-discord-evidence:v1 binding={binding} -->";
                 body += "\n" + marker;
                 await FinalizeEvidenceMarker(
@@ -237,15 +256,23 @@ public class GithubCommands : InteractionModuleBase
         return messageId;
     }
 
-    internal static (string Body, ulong? MessageId) ResolveMessageInput(string body, string message, ulong? guildId, ulong? channelId)
+    internal static (string Body, ulong? MessageId, ulong? DirectMessageChannelId) ResolveMessageInput(string body, string message, ulong? guildId, ulong? channelId)
     {
         if (string.IsNullOrWhiteSpace(message))
-            return (body, null);
+            return (body, null, null);
+        var match = DiscordMessageLink.Match(message);
+        if (match.Success && match.Groups["guild"].Value == "@me"
+            && ulong.TryParse(match.Groups["channel"].Value, out var directMessageChannelId)
+            && ulong.TryParse(match.Groups["message"].Value, out var directMessageId))
+            return (body, directMessageId, directMessageChannelId);
         var messageId = ExactMessageId(message, guildId, channelId);
         if (messageId != null)
-            return (body, messageId);
-        return (string.IsNullOrWhiteSpace(body) ? message : body + "\n\n" + message, null);
+            return (body, messageId, null);
+        return (string.IsNullOrWhiteSpace(body) ? message : body + "\n\n" + message, null, null);
     }
+
+    internal static bool IsAuthorizedDirectMessage(ulong actualChannelId, ulong recipientId, ulong linkedChannelId, ulong invokingUserId) =>
+        actualChannelId == linkedChannelId && recipientId == invokingUserId;
 
     internal static ulong? SelectReportMessageId(IEnumerable<(ulong Id, ulong AuthorId, bool IsBot, bool IsWebhook)> candidates, ulong invokingUserId)
     {
@@ -291,9 +318,9 @@ public class GithubCommands : InteractionModuleBase
         {
             var guildId = Context.Interaction.GuildId ?? 0;
             var channelId = Context.Interaction.ChannelId ?? 0;
-            if (ExactMessageId(modal.MessageLink, Context.Interaction.GuildId, Context.Interaction.ChannelId) == null)
+            if (ResolveMessageInput("", modal.MessageLink, Context.Interaction.GuildId, Context.Interaction.ChannelId).MessageId == null)
             {
-                await RespondAsync("Paste one exact Discord message link from this channel.", ephemeral: true);
+                await RespondAsync("Paste one exact message link from this guild channel or your one-to-one bot DM.", ephemeral: true);
                 return;
             }
             var pending = drafts.Peek(token, Context.User.Id, guildId, channelId);

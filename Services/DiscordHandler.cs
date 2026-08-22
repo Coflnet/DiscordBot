@@ -164,12 +164,25 @@ public class DiscordHandler : BackgroundService
         }
     }
 
-    public async Task<IReadOnlyList<IMessage>> GetExactEvidenceMessages(ulong channelId, ulong sourceMessageId, ulong afterMessageId, int limit)
+    public async Task<IReadOnlyList<IMessage>> GetExactEvidenceMessages(ulong guildId, ulong channelId,
+        ulong sourceMessageId, ulong recipientId, ulong afterMessageId, int limit)
     {
         if (client == null || limit is < 1 or > IssueEvidenceService.MaxMessages
             || await client.GetChannelAsync(channelId) is not IMessageChannel channel)
             throw new EvidenceDenied("bound_channel_unavailable");
-        if (channel is not SocketGuildChannel guildChannel || guildChannel.Guild.Id != IssueEvidenceService.CoflnetGuildId)
+        if (guildId == 0)
+        {
+            if (channel is not IDMChannel directMessage || directMessage.Recipient.Id != recipientId)
+                throw new EvidenceDenied("bound_dm_recipient_mismatch");
+            var directSource = await channel.GetMessageAsync(sourceMessageId);
+            if (directSource == null || directSource.Author.IsBot || directSource.Author.IsWebhook
+                || !IsExactDirectMessageEvidence(channel.Id, directMessage.Recipient.Id, directSource.Id,
+                    directSource.Author.Id, channelId, recipientId, sourceMessageId))
+                throw new EvidenceDenied("bound_dm_source_mismatch");
+            return afterMessageId == 0 ? [directSource] : [];
+        }
+        if (guildId != IssueEvidenceService.CoflnetGuildId || channel is not SocketGuildChannel guildChannel
+            || guildChannel.Guild.Id != guildId)
             throw new EvidenceDenied("bound_guild_mismatch");
         var source = await channel.GetMessageAsync(sourceMessageId);
         if (source == null)
@@ -203,6 +216,11 @@ public class DiscordHandler : BackgroundService
 
     internal static bool IsExactAttachedThread(ulong boundChannelId, ulong sourceMessageId, ulong candidateParentId, ulong candidateThreadId) =>
         candidateParentId == boundChannelId && candidateThreadId == sourceMessageId;
+
+    internal static bool IsExactDirectMessageEvidence(ulong actualChannelId, ulong actualRecipientId, ulong actualSourceId,
+        ulong actualSourceAuthorId, ulong boundChannelId, ulong boundRecipientId, ulong boundSourceId) =>
+        actualChannelId == boundChannelId && actualRecipientId == boundRecipientId && actualSourceId == boundSourceId
+        && actualSourceAuthorId == boundRecipientId;
 
     internal static (int Prior, int Later) EvidenceThreadWindowLimits(int limit, bool sourceIsInThread)
     {

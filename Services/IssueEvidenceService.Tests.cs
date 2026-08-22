@@ -25,7 +25,7 @@ public sealed class IssueEvidenceServiceTests
             Assert.That(payload.MessageId, Is.EqualTo("1540479250002354246"));
             Assert.Throws<EvidenceDenied>(() => service.ValidateBinding(binding, "Coflnet/SkyModCommands", 435));
             Assert.Throws<EvidenceDenied>(() => service.ValidateBinding(binding, "Coflnet/SkyApi", 434));
-            Assert.Throws<EvidenceDenied>(() => service.ValidateBinding(binding[..^1] + (binding[^1] == 'a' ? "b" : "a"), "Coflnet/SkyModCommands", 434));
+            Assert.Throws<EvidenceDenied>(() => service.ValidateBinding(binding[..20] + (binding[20] == 'a' ? "b" : "a") + binding[21..], "Coflnet/SkyModCommands", 434));
             Assert.Throws<EvidenceDenied>(() => Service(Now.AddDays(15)).ValidateBinding(binding, "Coflnet/SkyModCommands", 434));
         });
     }
@@ -104,13 +104,47 @@ public sealed class IssueEvidenceServiceTests
         Assert.Multiple(() =>
         {
             Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/SkyModCommands", IssueEvidenceService.CoflnetGuildId), Is.True);
-            Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/SkyModCommands", 0), Is.False);
+            Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/SkyModCommands", 0), Is.True);
             Assert.That(IssueEvidenceService.IsAllowedIssueSource("Coflnet/Other", IssueEvidenceService.CoflnetGuildId), Is.False);
             Assert.That(DiscordHandler.IsExactAttachedThread(10, 20, 10, 20), Is.True);
             Assert.That(DiscordHandler.IsExactAttachedThread(10, 20, 11, 20), Is.False);
             Assert.That(DiscordHandler.IsExactAttachedThread(10, 20, 10, 21), Is.False);
             Assert.That(DiscordHandler.EvidenceThreadWindowLimits(10, true), Is.EqualTo((4, 5)));
             Assert.That(DiscordHandler.EvidenceThreadWindowLimits(10, false), Is.EqualTo((0, 9)));
+        });
+    }
+
+    [Test]
+    public void DirectMessageBindingRequiresAndBindsRecipient()
+    {
+        var service = Service();
+        Assert.Throws<InvalidOperationException>(() =>
+            service.CreateBinding("Coflnet/SkyModCommands", 434, 0, 1535522079699509299, 1540607865847418932));
+        Assert.Throws<InvalidOperationException>(() => service.CreateBinding("Coflnet/SkyModCommands", 434,
+            IssueEvidenceService.CoflnetGuildId, 1535522079699509299, 1540607865847418932, 267680402594988033));
+
+        var binding = service.CreateBinding("Coflnet/SkyModCommands", 434, 0, 1535522079699509299,
+            1540607865847418932, 267680402594988033);
+        var payload = service.ValidateBinding(binding, "Coflnet/SkyModCommands", 434);
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload.GuildId, Is.EqualTo("0"));
+            Assert.That(payload.ChannelId, Is.EqualTo("1535522079699509299"));
+            Assert.That(payload.MessageId, Is.EqualTo("1540607865847418932"));
+            Assert.That(payload.RecipientId, Is.EqualTo("267680402594988033"));
+        });
+    }
+
+    [Test]
+    public void DirectMessageEvidenceMustMatchChannelRecipientSourceAndAuthor()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(DiscordHandler.IsExactDirectMessageEvidence(10, 7, 20, 7, 10, 7, 20), Is.True);
+            Assert.That(DiscordHandler.IsExactDirectMessageEvidence(11, 7, 20, 7, 10, 7, 20), Is.False);
+            Assert.That(DiscordHandler.IsExactDirectMessageEvidence(10, 8, 20, 8, 10, 7, 20), Is.False);
+            Assert.That(DiscordHandler.IsExactDirectMessageEvidence(10, 7, 21, 7, 10, 7, 20), Is.False);
+            Assert.That(DiscordHandler.IsExactDirectMessageEvidence(10, 7, 20, 8, 10, 7, 20), Is.False);
         });
     }
 

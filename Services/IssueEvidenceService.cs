@@ -49,15 +49,16 @@ public sealed class IssueEvidenceService
     public bool IsConfigured => bindingKey.Length == 32 && clientKey.Length == 32;
 
     internal static bool IsAllowedIssueSource(string repository, ulong guildId) =>
-        Repositories.Contains(repository) && guildId == CoflnetGuildId;
+        Repositories.Contains(repository) && guildId is 0 or CoflnetGuildId;
 
-    public string CreateBinding(string repository, long issueNumber, ulong guildId, ulong channelId, ulong messageId)
+    public string CreateBinding(string repository, long issueNumber, ulong guildId, ulong channelId, ulong messageId,
+        ulong recipientId = 0)
     {
         if (!IsConfigured || !IsAllowedIssueSource(repository, guildId) || issueNumber < 1
-            || channelId == 0 || messageId == 0)
+            || channelId == 0 || messageId == 0 || (guildId == 0) != (recipientId != 0))
             throw new InvalidOperationException("Discord issue evidence binding is unavailable for this target");
         var payload = new BindingPayload(1, repository, issueNumber, guildId.ToString(), channelId.ToString(),
-            messageId.ToString(), now().UtcDateTime.ToString("O"), Base64Url(RandomNumberGenerator.GetBytes(16)));
+            messageId.ToString(), recipientId.ToString(), now().UtcDateTime.ToString("O"), Base64Url(RandomNumberGenerator.GetBytes(16)));
         var encodedPayload = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
         var envelope = new BindingEnvelope(Base64Url(encodedPayload), Base64Url(Sign(bindingKey, encodedPayload)));
         return Base64Url(JsonSerializer.SerializeToUtf8Bytes(envelope, JsonOptions));
@@ -84,9 +85,11 @@ public sealed class IssueEvidenceService
         try { payload = JsonSerializer.Deserialize<BindingPayload>(payloadBytes, JsonOptions); }
         catch { throw new EvidenceDenied("invalid_binding_payload"); }
         if (payload == null || payload.Version != 1 || payload.Repository != repository || payload.IssueNumber != issueNumber
-            || !Repositories.Contains(payload.Repository) || payload.GuildId != CoflnetGuildId.ToString()
+            || !Repositories.Contains(payload.Repository) || !ulong.TryParse(payload.GuildId, out var guildId)
+            || guildId is not (0 or CoflnetGuildId)
             || !ulong.TryParse(payload.ChannelId, out var channel) || channel == 0
             || !ulong.TryParse(payload.MessageId, out var message) || message == 0
+            || !ulong.TryParse(payload.RecipientId ?? "0", out var recipient) || (guildId == 0) != (recipient != 0)
             || !DateTimeOffset.TryParse(payload.CreatedAt, out var created) || created > now().AddMinutes(1)
             || created < now().AddDays(-14) || FromBase64Url(payload.Nonce).Length != 16)
             throw new EvidenceDenied("binding_mismatch_or_expired");
@@ -123,6 +126,8 @@ public sealed class IssueEvidenceService
         var bindingDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(request.Binding)));
         var channelId = ulong.Parse(binding.ChannelId);
         var sourceId = ulong.Parse(binding.MessageId);
+        var guildId = ulong.Parse(binding.GuildId);
+        var recipientId = ulong.Parse(binding.RecipientId ?? "0");
         ulong after = 0;
         var seen = 0;
         if (!string.IsNullOrEmpty(request.After)) (after, seen) = ValidateCursor(request.After, bindingDigest);
@@ -130,7 +135,7 @@ public sealed class IssueEvidenceService
         if (remaining == 0)
             return new("coflnet.discord.issue-evidence-raw/v1", request.Repository, request.IssueNumber,
                 bindingDigest, [], [], request.After, true, new(0, 0, 0, 0));
-        var rawMessages = await discord.GetExactEvidenceMessages(channelId, sourceId, after, remaining);
+        var rawMessages = await discord.GetExactEvidenceMessages(guildId, channelId, sourceId, recipientId, after, remaining);
         if (rawMessages.Count == 0)
             return new("coflnet.discord.issue-evidence-raw/v1", request.Repository, request.IssueNumber,
                 bindingDigest, [], [], request.After, true, new(0, 0, 0, 0));
@@ -284,7 +289,7 @@ public sealed class IssueEvidenceService
     };
 
     internal sealed record BindingPayload(int Version, string Repository, long IssueNumber, string GuildId,
-        string ChannelId, string MessageId, string CreatedAt, string Nonce);
+        string ChannelId, string MessageId, string? RecipientId, string CreatedAt, string Nonce);
     private sealed record BindingEnvelope(string Payload, string Signature);
     private sealed record CursorPayload(int Version, string BindingSha256, string After, int Seen);
 }

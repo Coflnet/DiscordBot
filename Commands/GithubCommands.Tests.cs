@@ -87,8 +87,44 @@ public class GitRepoAutocompleteHandlerTests
         {
             Assert.That(details.Body, Is.EqualTo("existing\n\nBazaar and AH prices should indicate live updates"));
             Assert.That(details.MessageId, Is.Null);
+            Assert.That(details.DirectMessageChannelId, Is.Null);
             Assert.That(exact.Body, Is.EqualTo("existing"));
             Assert.That(exact.MessageId, Is.EqualTo(1540479250002354246));
+            Assert.That(exact.DirectMessageChannelId, Is.Null);
+        });
+    }
+
+    [Test]
+    public void ExactDirectMessageLinkSelectsItsLinkedChannel()
+    {
+        const string link = "https://discord.com/channels/@me/1535522079699509299/1540607865847418932";
+        var exact = GithubCommands.ResolveMessageInput("existing", link, null, 111111111111111111);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(exact.Body, Is.EqualTo("existing"));
+            Assert.That(exact.MessageId, Is.EqualTo(1540607865847418932));
+            Assert.That(exact.DirectMessageChannelId, Is.EqualTo(1535522079699509299));
+        });
+    }
+
+    [Test]
+    public void CurrentDirectMessageLinkStillRequiresDmAuthorization()
+    {
+        const ulong channel = 1535522079699509299;
+        var exact = GithubCommands.ResolveMessageInput("", "https://discord.com/channels/@me/1535522079699509299/1540607865847418932", null, channel);
+
+        Assert.That(exact.DirectMessageChannelId, Is.EqualTo(channel));
+    }
+
+    [Test]
+    public void DirectMessageSourceMustBeInvokingUsersExactChannel()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(GithubCommands.IsAuthorizedDirectMessage(10, 7, 10, 7), Is.True);
+            Assert.That(GithubCommands.IsAuthorizedDirectMessage(10, 8, 10, 7), Is.False);
+            Assert.That(GithubCommands.IsAuthorizedDirectMessage(11, 7, 10, 7), Is.False);
         });
     }
 
