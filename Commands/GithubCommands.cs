@@ -93,10 +93,10 @@ public class GithubCommands : InteractionModuleBase
             else
             {
                 // DeferAsync creates the newest channel entry. Use the interaction
-                // snowflake as the exclusive cursor, then ignore bot/webhook prompts
-                // in the small backward page.
+                // snowflake as the exclusive cursor, then take the nearest ordinary
+                // guild message even when the operator did not author the report.
                 var candidates = (await callingChannel.GetMessagesAsync(Context.Interaction.Id, Direction.Before, MaxIssueSourceMessages).FlattenAsync()).ToList();
-                var selectedReportId = SelectReportMessageId(candidates.Select(candidate => (candidate.Id, candidate.Author.Id, candidate.Author.IsBot, candidate.Author.IsWebhook)), Context.User.Id);
+                var selectedReportId = SelectReportMessageId(candidates.Select(candidate => (candidate.Id, candidate.Author.IsBot, candidate.Author.IsWebhook)));
                 reportMessage = selectedReportId == null ? null : candidates.First(candidate => candidate.Id == selectedReportId);
             }
             if (reportMessage == null || reportMessage.Author.IsBot || reportMessage.Author.IsWebhook
@@ -181,10 +181,10 @@ public class GithubCommands : InteractionModuleBase
         var resolvedAttachedUrls = ResolveAttachedImageUrls(attachedUrls);
         body = AppendIssueContext(body, repo, contextUrl, harvestedUrls, resolvedAttachedUrls);
         var canBind = CanBindEvidence("Coflnet/" + repo, reportGuildId, reportMessageId);
-        if (canBind && !evidence.IsConfigured)
+        var attachEvidence = canBind && evidence.IsConfigured;
+        if (canBind && !attachEvidence)
         {
-            await FollowupAsync("Discord issue evidence is not configured; no issue was created.", ephemeral: true);
-            return;
+            body += "\n\n> Note: Discord context retrieval was unavailable when this issue was created. Inspect the context link manually.";
         }
         body = body.Replace("https://discord.com/channels//", "https://discord.com/channels/@me/"); // dm messages
         var newIssue = new NewIssue(title)
@@ -195,7 +195,7 @@ public class GithubCommands : InteractionModuleBase
         {
             var issue = await github.Issue.Create("Coflnet", repo, newIssue);
 
-            if (canBind)
+            if (attachEvidence)
             {
                 var binding = evidence.CreateBinding("Coflnet/" + repo, issue.Number, reportGuildId, reportChannelId,
                     reportMessageId, reportGuildId == 0 ? invokingUserId : 0, sourceKind);
@@ -218,7 +218,7 @@ public class GithubCommands : InteractionModuleBase
             await PutIssueOnBoard(issue.NodeId);
 
             var description = $"Issue created at https://github.com/Coflnet/{repo}/issues/{issue.Number}";
-            if (EvidenceApplies(repo) && !canBind)
+            if (EvidenceApplies(repo) && !attachEvidence)
                 description += "\nDiscord evidence was not attached.";
             foreach (var note in extraNotes ?? Enumerable.Empty<string>())
                 description += "\n" + note;
@@ -356,10 +356,10 @@ public class GithubCommands : InteractionModuleBase
     internal static bool IsAuthorizedDirectMessage(ulong actualChannelId, ulong recipientId, ulong linkedChannelId, ulong invokingUserId) =>
         actualChannelId == linkedChannelId && recipientId == invokingUserId;
 
-    internal static ulong? SelectReportMessageId(IEnumerable<(ulong Id, ulong AuthorId, bool IsBot, bool IsWebhook)> candidates, ulong invokingUserId)
+    internal static ulong? SelectReportMessageId(IEnumerable<(ulong Id, bool IsBot, bool IsWebhook)> candidates)
     {
         foreach (var candidate in candidates)
-            if (candidate.AuthorId == invokingUserId && !candidate.IsBot && !candidate.IsWebhook)
+            if (!candidate.IsBot && !candidate.IsWebhook)
                 return candidate.Id;
         return null;
     }

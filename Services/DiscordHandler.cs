@@ -303,7 +303,9 @@ public class DiscordHandler : BackgroundService
     internal static (int Prior, int Later) EvidenceThreadWindowLimits(int limit, bool sourceIsInThread)
     {
         if (limit < 1) throw new ArgumentOutOfRangeException(nameof(limit));
-        var prior = sourceIsInThread ? (limit - 1) / 2 : 0;
+        // The source is normally the newest pre-command message. Spend the bounded
+        // budget on its preceding thread context, then fill unused capacity later.
+        var prior = sourceIsInThread ? limit - 1 : 0;
         return (prior, limit - 1 - prior);
     }
 

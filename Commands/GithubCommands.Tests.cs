@@ -122,20 +122,20 @@ public class GitRepoAutocompleteHandlerTests
     }
 
     [Test]
-    public void DefaultReportSelectionSkipsBotPromptAndWebhook()
+    public void DefaultGuildReportSelectionUsesNearestOrdinaryMessage()
     {
         var candidates = new[]
         {
-            (Id: 40UL, AuthorId: 7UL, IsBot: true, IsWebhook: false),
-            (Id: 30UL, AuthorId: 7UL, IsBot: false, IsWebhook: true),
-            (Id: 20UL, AuthorId: 8UL, IsBot: false, IsWebhook: false),
-            (Id: 10UL, AuthorId: 7UL, IsBot: false, IsWebhook: false)
+            (Id: 40UL, IsBot: true, IsWebhook: false),
+            (Id: 30UL, IsBot: false, IsWebhook: true),
+            (Id: 20UL, IsBot: false, IsWebhook: false),
+            (Id: 10UL, IsBot: false, IsWebhook: false)
         };
 
         Assert.Multiple(() =>
         {
-            Assert.That(GithubCommands.SelectReportMessageId(candidates, 7), Is.EqualTo(10UL));
-            Assert.That(GithubCommands.SelectReportMessageId(candidates.Take(3), 7), Is.Null);
+            Assert.That(GithubCommands.SelectReportMessageId(candidates), Is.EqualTo(20UL));
+            Assert.That(GithubCommands.SelectReportMessageId(candidates.Take(2)), Is.Null);
         });
     }
 

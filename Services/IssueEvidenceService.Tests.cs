@@ -2,7 +2,10 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Discord;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
 
@@ -102,6 +105,29 @@ public sealed class IssueEvidenceServiceTests
     }
 
     [Test]
+    public async Task ProbeAcceptsKubernetesServiceProxyOctetStream()
+    {
+        var service = Service();
+        var timestamp = Now.ToString("O");
+        var nonce = Base64Url(Enumerable.Repeat((byte)0x45, 16).ToArray());
+        var request = new EvidenceRequest("coflnet.discord.issue-evidence-probe/v1", "", 0, "", "", timestamp, nonce, "");
+        var signed = Encoding.UTF8.GetBytes(string.Join("\n", "POST", "/internal/v1/agent/issue-evidence/probe",
+            request.Schema, request.Repository, request.IssueNumber, request.Binding, request.After, request.Timestamp, request.Nonce));
+        request = request with { Signature = Base64Url(HMACSHA256.HashData(ClientKey, signed)) };
+        var controller = new IssueEvidenceController(service, NullLogger<IssueEvidenceController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+        controller.Request.ContentType = "application/octet-stream";
+        controller.Request.Body = new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(request,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }));
+
+        var response = await controller.Probe(CancellationToken.None);
+
+        Assert.That(response, Is.TypeOf<OkObjectResult>());
+    }
+
+    [Test]
     public void IssueSourcesAndAttachedThreadsStayExact()
     {
         Assert.Multiple(() =>
@@ -120,8 +146,9 @@ public sealed class IssueEvidenceServiceTests
             Assert.That(DiscordHandler.IsExactAttachedThread(10, 20, 10, 20), Is.True);
             Assert.That(DiscordHandler.IsExactAttachedThread(10, 20, 11, 20), Is.False);
             Assert.That(DiscordHandler.IsExactAttachedThread(10, 20, 10, 21), Is.False);
-            Assert.That(DiscordHandler.EvidenceThreadWindowLimits(10, true), Is.EqualTo((4, 5)));
+            Assert.That(DiscordHandler.EvidenceThreadWindowLimits(10, true), Is.EqualTo((9, 0)));
             Assert.That(DiscordHandler.EvidenceThreadWindowLimits(10, false), Is.EqualTo((0, 9)));
+            Assert.That(DiscordHandler.EvidenceThreadWindowLimits(IssueEvidenceService.MaxMessages, true), Is.EqualTo((199, 0)));
         });
     }
 
