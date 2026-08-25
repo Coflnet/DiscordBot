@@ -300,15 +300,12 @@ public sealed class IssueEvidenceService
     // Bound to the exact type Discord declared for this attachment, not just any allowed image
     // type - otherwise the served/detected bytes could be misdeclared in the evidence payload's
     // media_type (which is taken from attachment.ContentType, not from what was actually served).
+    // Discord's upload size is advisory: its signed CDN may normalize image bytes. The bounded,
+    // detected download length is the evidence receipt's authoritative size.
     internal async Task<byte[]?> DownloadImage(IAttachment attachment, CancellationToken cancellationToken)
     {
         var result = await DownloadIssueImage(attachment.Url, cancellationToken);
         if (result == null) return null;
-        if (result.Value.Data.Length != attachment.Size)
-        {
-            logger.LogInformation("Discord evidence image rejected: attachment_size");
-            return null;
-        }
         if (result.Value.MediaType != attachment.ContentType)
         {
             logger.LogInformation("Discord evidence image rejected: attachment_type");

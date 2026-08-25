@@ -330,6 +330,15 @@ public sealed class IssueEvidenceServiceTests
         Assert.That(await service.DownloadImage(attachment, CancellationToken.None), Is.EqualTo(Png));
     }
 
+    [Test]
+    public async Task DownloadImageUsesTheBoundedDownloadedSizeWhenDiscordsUploadSizeDiffers()
+    {
+        var service = ServiceWithHttpResponse(StubResponse("image/webp", WebP));
+        var attachment = new StubAttachment { ContentType = "image/webp", Size = WebP.Length + 1, Url = "https://cdn.discordapp.com/x.webp" };
+
+        Assert.That(await service.DownloadImage(attachment, CancellationToken.None), Is.EqualTo(WebP));
+    }
+
     private static readonly byte[] Png = { 137, 80, 78, 71, 13, 10, 26, 10, 0, 0 };
     private static readonly byte[] WebP = Convert.FromBase64String("UklGRiYAAABXRUJQVlA4IBoAAAAwAQCdASoBAAEAAgA0JaQAA3AA/vtoe54QAA==");
 
