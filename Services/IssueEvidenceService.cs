@@ -189,16 +189,16 @@ public sealed class IssueEvidenceService
                     omittedImageBytes += (int)Math.Min(attachment.Size, int.MaxValue);
                     continue;
                 }
-                var data = await DownloadImage(attachment, cancellationToken);
-                if (data == null || totalImage + data.Length > MaxTotalImageBytes)
+                var image = await DownloadImage(attachment, cancellationToken);
+                if (image == null || totalImage + image.Value.Data.Length > MaxTotalImageBytes)
                 {
-                    omittedImages++; omittedImageBytes += data?.Length ?? (int)Math.Min(attachment.Size, int.MaxValue); continue;
+                    omittedImages++; omittedImageBytes += image?.Data.Length ?? (int)Math.Min(attachment.Size, int.MaxValue); continue;
                 }
-                totalImage += data.Length;
-                var extension = attachment.ContentType == "image/png" ? "png" : attachment.ContentType == "image/jpeg" ? "jpg"
-                    : attachment.ContentType == "image/gif" ? "gif" : "webp";
+                totalImage += image.Value.Data.Length;
+                var extension = image.Value.MediaType == "image/png" ? "png" : image.Value.MediaType == "image/jpeg" ? "jpg"
+                    : image.Value.MediaType == "image/gif" ? "gif" : "webp";
                 images.Add(new(message.Id.ToString(), attachment.Id.ToString(), $"discord-evidence-{images.Count + 1}.{extension}",
-                    attachment.ContentType!, data.Length, Convert.ToHexStringLower(SHA256.HashData(data)), Convert.ToBase64String(data)));
+                    image.Value.MediaType, image.Value.Data.Length, Convert.ToHexStringLower(SHA256.HashData(image.Value.Data)), Convert.ToBase64String(image.Value.Data)));
             }
         }
         var last = rawMessages.Max(value => value.Id);
@@ -297,22 +297,10 @@ public sealed class IssueEvidenceService
         return (data, detected);
     }
 
-    // Bound to the exact type Discord declared for this attachment, not just any allowed image
-    // type - otherwise the served/detected bytes could be misdeclared in the evidence payload's
-    // media_type (which is taken from attachment.ContentType, not from what was actually served).
-    // Discord's upload size is advisory: its signed CDN may normalize image bytes. The bounded,
-    // detected download length is the evidence receipt's authoritative size.
-    internal async Task<byte[]?> DownloadImage(IAttachment attachment, CancellationToken cancellationToken)
-    {
-        var result = await DownloadIssueImage(attachment.Url, cancellationToken);
-        if (result == null) return null;
-        if (result.Value.MediaType != attachment.ContentType)
-        {
-            logger.LogInformation("Discord evidence image rejected: attachment_type");
-            return null;
-        }
-        return result.Value.Data;
-    }
+    // Discord's upload size and type are advisory: its signed CDN may normalize image bytes.
+    // The bounded download's detected encoding and length are the evidence receipt's values.
+    internal Task<(byte[] Data, string MediaType)?> DownloadImage(IAttachment attachment, CancellationToken cancellationToken) =>
+        DownloadIssueImage(attachment.Url, cancellationToken);
 
     private static string BoundUtf8(string value, int limit, out int omitted)
     {

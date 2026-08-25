@@ -309,16 +309,18 @@ public sealed class IssueEvidenceServiceTests
     }
 
     [Test]
-    public async Task DownloadImageRejectsServedTypeThatDiffersFromTheDeclaredAttachmentType()
+    public async Task DownloadImageUsesTheServedDetectedTypeWhenDiscordsUploadTypeDiffers()
     {
-        // Served bytes are a valid, correctly-detected PNG - but Discord declared this attachment
-        // as a JPEG. Fetch reports attachment.ContentType (not what was actually served) as the
-        // payload's media_type, so accepting this would let the evidence payload misdeclare its
-        // own bytes - exactly the provenance property DownloadImage exists to guarantee.
         var service = ServiceWithHttpResponse(StubResponse("image/png", Png));
         var attachment = new StubAttachment { ContentType = "image/jpeg", Size = Png.Length, Url = "https://cdn.discordapp.com/x.png" };
 
-        Assert.That(await service.DownloadImage(attachment, CancellationToken.None), Is.Null);
+        var result = await service.DownloadImage(attachment, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Value.MediaType, Is.EqualTo("image/png"));
+            Assert.That(result.Value.Data, Is.EqualTo(Png));
+        });
     }
 
     [Test]
@@ -327,7 +329,7 @@ public sealed class IssueEvidenceServiceTests
         var service = ServiceWithHttpResponse(StubResponse("image/png", Png));
         var attachment = new StubAttachment { ContentType = "image/png", Size = Png.Length, Url = "https://cdn.discordapp.com/x.png" };
 
-        Assert.That(await service.DownloadImage(attachment, CancellationToken.None), Is.EqualTo(Png));
+        Assert.That((await service.DownloadImage(attachment, CancellationToken.None))!.Value.Data, Is.EqualTo(Png));
     }
 
     [Test]
@@ -336,7 +338,7 @@ public sealed class IssueEvidenceServiceTests
         var service = ServiceWithHttpResponse(StubResponse("image/webp", WebP));
         var attachment = new StubAttachment { ContentType = "image/webp", Size = WebP.Length + 1, Url = "https://cdn.discordapp.com/x.webp" };
 
-        Assert.That(await service.DownloadImage(attachment, CancellationToken.None), Is.EqualTo(WebP));
+        Assert.That((await service.DownloadImage(attachment, CancellationToken.None))!.Value.Data, Is.EqualTo(WebP));
     }
 
     private static readonly byte[] Png = { 137, 80, 78, 71, 13, 10, 26, 10, 0, 0 };
