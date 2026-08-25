@@ -181,7 +181,14 @@ public sealed class IssueEvidenceService
             foreach (var attachment in message.Attachments)
             {
                 if (images.Count >= MaxImages) { omittedImages++; omittedImageBytes += (int)Math.Min(attachment.Size, int.MaxValue); continue; }
-                if (!GithubCommands.IsPublicIssueImage(attachment)) { omittedImages++; omittedImageBytes += (int)Math.Min(attachment.Size, int.MaxValue); continue; }
+                var metadataRejection = GithubCommands.PublicIssueImageRejection(attachment.Size, attachment.ContentType, attachment.Url);
+                if (metadataRejection != null)
+                {
+                    logger.LogInformation("Discord evidence image rejected: metadata_{Reason}", metadataRejection);
+                    omittedImages++;
+                    omittedImageBytes += (int)Math.Min(attachment.Size, int.MaxValue);
+                    continue;
+                }
                 var data = await DownloadImage(attachment, cancellationToken);
                 if (data == null || totalImage + data.Length > MaxTotalImageBytes)
                 {

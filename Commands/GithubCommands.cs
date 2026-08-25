@@ -291,13 +291,16 @@ public class GithubCommands : InteractionModuleBase
     internal sealed class IssueMarkerFinalizationException : Exception;
 
     internal static bool IsPublicIssueImage(IAttachment attachment) =>
-        IsPublicIssueImage(attachment.Size, attachment.ContentType, attachment.Url);
+        PublicIssueImageRejection(attachment.Size, attachment.ContentType, attachment.Url) == null;
 
-    internal static bool IsPublicIssueImage(long size, string? contentType, string url)
+    internal static bool IsPublicIssueImage(long size, string? contentType, string url) =>
+        PublicIssueImageRejection(size, contentType, url) == null;
+
+    internal static string? PublicIssueImageRejection(long size, string? contentType, string url)
     {
-        if (size <= 0 || size > MaxPublicIssueImageBytes || !PublicIssueImageTypes.Contains(contentType ?? ""))
-            return false;
-        return IsDiscordAttachmentUrl(url, out _);
+        if (size <= 0 || size > MaxPublicIssueImageBytes) return "size";
+        if (!PublicIssueImageTypes.Contains(contentType ?? "")) return "content_type";
+        return DiscordAttachmentUrlRejection(url, out _);
     }
 
     // Pasted links (from a modal) carry no size/content-type, so the file extension stands in for
@@ -305,18 +308,22 @@ public class GithubCommands : InteractionModuleBase
     internal static bool IsPastedIssueImageUrl(string url) =>
         IsDiscordAttachmentUrl(url, out var filename) && PastedIssueImageExtensions.Contains(Path.GetExtension(filename));
 
-    private static bool IsDiscordAttachmentUrl(string url, out string filename)
+    private static bool IsDiscordAttachmentUrl(string url, out string filename) =>
+        DiscordAttachmentUrlRejection(url, out filename) == null;
+
+    private static string? DiscordAttachmentUrlRejection(string url, out string filename)
     {
         filename = "";
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
-            || !string.Equals(uri.Authority, "cdn.discordapp.com", StringComparison.Ordinal)
-            || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 || !DiscordAttachmentPath.IsMatch(uri.AbsolutePath))
-            return false;
-        if (uri.Query.Length != 0 && !DiscordAttachmentQuery.IsMatch(uri.Query))
-            return false;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return "url_parse";
+        if (uri.Scheme != Uri.UriSchemeHttps) return "url_scheme";
+        if (!string.Equals(uri.Authority, "cdn.discordapp.com", StringComparison.Ordinal)) return "url_origin";
+        if (uri.UserInfo.Length != 0) return "url_user_info";
+        if (uri.Fragment.Length != 0) return "url_fragment";
+        if (!DiscordAttachmentPath.IsMatch(uri.AbsolutePath)) return "url_path";
+        if (uri.Query.Length != 0 && !DiscordAttachmentQuery.IsMatch(uri.Query)) return "url_query";
         filename = Uri.UnescapeDataString(uri.AbsolutePath[(uri.AbsolutePath.LastIndexOf('/') + 1)..]);
-        return filename is not "." and not ".." && filename.Length <= 255 && !filename.Contains('/') && !filename.Contains('\\')
-            && !filename.Any(character => char.IsControl(character));
+        return filename is "." or ".." || filename.Length > 255 || filename.Contains('/') || filename.Contains('\\')
+            || filename.Any(character => char.IsControl(character)) ? "url_filename" : null;
     }
 
     internal static IReadOnlyList<string> ParsePastedImageUrls(string value) =>

@@ -46,6 +46,15 @@ public class GitRepoAutocompleteHandlerTests
         });
     }
 
+    [TestCase(0, "image/png", DiscordImage, "size")]
+    [TestCase(1024, "image/webp", DiscordImage, "content_type")]
+    [TestCase(1024, "image/png", "https://media.discordapp.net/attachments/12345678901234567/23456789012345678/report.png", "url_origin")]
+    [TestCase(1024, "image/png", DiscordImage + "?width=800", "url_query")]
+    public void DiscordImageMetadataRejectionsAreCategorized(long size, string contentType, string url, string reason)
+    {
+        Assert.That(GithubCommands.PublicIssueImageRejection(size, contentType, url), Is.EqualTo(reason));
+    }
+
     [TestCase(DiscordImage)]
     [TestCase(DiscordImage + "?ex=1234abcd&is=5678abcd&hm=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
     [TestCase(DiscordImage + "?ex=1234abcd&is=5678abcd&hm=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&")]
