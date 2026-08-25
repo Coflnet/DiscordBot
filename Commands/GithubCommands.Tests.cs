@@ -20,6 +20,7 @@ public class GitRepoAutocompleteHandlerTests
 
     [TestCase(DiscordImage)]
     [TestCase(DiscordImage + "?ex=1234abcd&is=5678abcd&hm=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [TestCase(DiscordImage + "?ex=1234abcd&is=5678abcd&hm=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&")]
     public void ReviewedDiscordImagesAreAccepted(string url)
     {
         Assert.That(GithubCommands.IsPublicIssueImage(1024, "image/png", url), Is.True);
@@ -47,6 +48,7 @@ public class GitRepoAutocompleteHandlerTests
 
     [TestCase(DiscordImage)]
     [TestCase(DiscordImage + "?ex=1234abcd&is=5678abcd&hm=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [TestCase(DiscordImage + "?ex=1234abcd&is=5678abcd&hm=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&")]
     public void PastedImageLinksAreAcceptedWhenWellFormed(string url)
     {
         Assert.That(GithubCommands.IsPastedIssueImageUrl(url), Is.True);
