@@ -283,6 +283,21 @@ public sealed class IssueEvidenceServiceTests
     }
 
     [Test]
+    public async Task DownloadIssueImageAcceptsAMatchingWebPImage()
+    {
+        var service = ServiceWithHttpResponse(StubResponse("image/webp", WebP));
+
+        var result = await service.DownloadIssueImage("https://cdn.discordapp.com/x.webp", CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result!.Value.MediaType, Is.EqualTo("image/webp"));
+            Assert.That(result.Value.Data, Is.EqualTo(WebP));
+        });
+    }
+
+    [Test]
     public async Task DownloadIssueImageIdentifiesTheBotToDiscord()
     {
         var factory = new StubHttpClientFactory(StubResponse("image/png", Png));
@@ -316,6 +331,7 @@ public sealed class IssueEvidenceServiceTests
     }
 
     private static readonly byte[] Png = { 137, 80, 78, 71, 13, 10, 26, 10, 0, 0 };
+    private static readonly byte[] WebP = Convert.FromBase64String("UklGRiYAAABXRUJQVlA4IBoAAAAwAQCdASoBAAEAAgA0JaQAA3AA/vtoe54QAA==");
 
     private static HttpResponseMessage StubResponse(string contentType, byte[] body)
     {

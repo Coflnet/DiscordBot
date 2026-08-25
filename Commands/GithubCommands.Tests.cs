@@ -47,12 +47,19 @@ public class GitRepoAutocompleteHandlerTests
     }
 
     [TestCase(0, "image/png", DiscordImage, "size")]
-    [TestCase(1024, "image/webp", DiscordImage, "content_type")]
+    [TestCase(1024, "image/avif", DiscordImage, "content_type")]
     [TestCase(1024, "image/png", "https://media.discordapp.net/attachments/12345678901234567/23456789012345678/report.png", "url_origin")]
     [TestCase(1024, "image/png", DiscordImage + "?width=800", "url_query")]
     public void DiscordImageMetadataRejectionsAreCategorized(long size, string contentType, string url, string reason)
     {
         Assert.That(GithubCommands.PublicIssueImageRejection(size, contentType, url), Is.EqualTo(reason));
+    }
+
+    [Test]
+    public void DiscordWebPImagesAreAccepted()
+    {
+        Assert.That(GithubCommands.IsPublicIssueImage(1024, "image/webp", DiscordImage.Replace(".png", ".webp")), Is.True);
+        Assert.That(GithubCommands.IsPastedIssueImageUrl(DiscordImage.Replace(".png", ".webp")), Is.True);
     }
 
     [TestCase(DiscordImage)]

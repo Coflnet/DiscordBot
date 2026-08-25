@@ -20,8 +20,8 @@ public class GithubCommands : InteractionModuleBase
     static readonly Regex DiscordAttachmentPath = new(@"^/attachments/[0-9]{17,20}/[0-9]{17,20}/[^/?#\x00-\x20]{1,768}$", RegexOptions.CultureInvariant);
     static readonly Regex DiscordAttachmentQuery = new(@"^\?ex=[0-9a-f]{8}&is=[0-9a-f]{8}&hm=[0-9a-f]{64}&?$", RegexOptions.CultureInvariant);
     internal static readonly Regex DiscordMessageLink = new(@"^https://discord\.com/channels/(?<guild>@me|[0-9]{17,20})/(?<channel>[0-9]{17,20})/(?<message>[0-9]{17,20})$", RegexOptions.CultureInvariant);
-    static readonly HashSet<string> PublicIssueImageTypes = new(StringComparer.OrdinalIgnoreCase) { "image/png", "image/jpeg", "image/gif" };
-    static readonly HashSet<string> PastedIssueImageExtensions = new(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".gif" };
+    static readonly HashSet<string> PublicIssueImageTypes = new(StringComparer.OrdinalIgnoreCase) { "image/png", "image/jpeg", "image/gif", "image/webp" };
+    static readonly HashSet<string> PastedIssueImageExtensions = new(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".gif", ".webp" };
 
     public GithubCommands(GitHubClient github, Octokit.GraphQL.Connection connection, ILogger<GithubCommands> logger,
         IssueEvidenceService evidence, IssueDraftService drafts, DiscordHandler discord)

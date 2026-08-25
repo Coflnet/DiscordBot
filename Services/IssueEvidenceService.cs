@@ -195,7 +195,8 @@ public sealed class IssueEvidenceService
                     omittedImages++; omittedImageBytes += data?.Length ?? (int)Math.Min(attachment.Size, int.MaxValue); continue;
                 }
                 totalImage += data.Length;
-                var extension = attachment.ContentType == "image/png" ? "png" : attachment.ContentType == "image/jpeg" ? "jpg" : "gif";
+                var extension = attachment.ContentType == "image/png" ? "png" : attachment.ContentType == "image/jpeg" ? "jpg"
+                    : attachment.ContentType == "image/gif" ? "gif" : "webp";
                 images.Add(new(message.Id.ToString(), attachment.Id.ToString(), $"discord-evidence-{images.Count + 1}.{extension}",
                     attachment.ContentType!, data.Length, Convert.ToHexStringLower(SHA256.HashData(data)), Convert.ToBase64String(data)));
             }
@@ -252,7 +253,7 @@ public sealed class IssueEvidenceService
     internal async Task<(byte[] Data, string MediaType)?> DownloadIssueImage(string url, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.TryAddWithoutValidation("Accept", "image/png,image/jpeg,image/gif");
+        request.Headers.TryAddWithoutValidation("Accept", "image/png,image/jpeg,image/gif,image/webp");
         request.Headers.TryAddWithoutValidation("User-Agent", "DiscordBot (https://github.com/Coflnet/DiscordBot, 1)");
         using var response = await httpClients.CreateClient("discord-evidence-images")
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -267,7 +268,7 @@ public sealed class IssueEvidenceService
             logger.LogInformation("Discord evidence image rejected: content_length");
             return null;
         }
-        if (contentType is not ("image/png" or "image/jpeg" or "image/gif"))
+        if (contentType is not ("image/png" or "image/jpeg" or "image/gif" or "image/webp"))
         {
             logger.LogInformation("Discord evidence image rejected: content_type");
             return null;
@@ -331,6 +332,7 @@ public sealed class IssueEvidenceService
         if (value.Length >= 8 && value.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })) return "image/png";
         if (value.Length >= 3 && value[0] == 0xff && value[1] == 0xd8 && value[2] == 0xff) return "image/jpeg";
         if (value.Length >= 6 && (Encoding.ASCII.GetString(value, 0, 6) is "GIF87a" or "GIF89a")) return "image/gif";
+        if (value.Length >= 12 && Encoding.ASCII.GetString(value, 0, 4) == "RIFF" && Encoding.ASCII.GetString(value, 8, 4) == "WEBP") return "image/webp";
         return "";
     }
 
