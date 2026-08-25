@@ -283,6 +283,17 @@ public sealed class IssueEvidenceServiceTests
     }
 
     [Test]
+    public async Task DownloadIssueImageIdentifiesTheBotToDiscord()
+    {
+        var factory = new StubHttpClientFactory(StubResponse("image/png", Png));
+        var service = new IssueEvidenceService(BindingKey, ClientKey, null!, factory,
+            NullLogger<IssueEvidenceService>.Instance, () => Now);
+
+        Assert.That(await service.DownloadIssueImage("https://cdn.discordapp.com/x.png", CancellationToken.None), Is.Not.Null);
+        Assert.That(factory.UserAgent, Is.EqualTo("DiscordBot (https://github.com/Coflnet/DiscordBot, 1)"));
+    }
+
+    [Test]
     public async Task DownloadImageRejectsServedTypeThatDiffersFromTheDeclaredAttachmentType()
     {
         // Served bytes are a valid, correctly-detected PNG - but Discord declared this attachment
@@ -318,13 +329,18 @@ public sealed class IssueEvidenceServiceTests
 
     private sealed class StubHttpClientFactory(HttpResponseMessage response) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => new(new StubHttpMessageHandler(response));
+        public string? UserAgent { get; private set; }
+        public HttpClient CreateClient(string name) => new(new StubHttpMessageHandler(response,
+            request => UserAgent = request.Headers.UserAgent.ToString()));
     }
 
-    private sealed class StubHttpMessageHandler(HttpResponseMessage response) : HttpMessageHandler
+    private sealed class StubHttpMessageHandler(HttpResponseMessage response, Action<HttpRequestMessage> observe) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-            => Task.FromResult(response);
+        {
+            observe(request);
+            return Task.FromResult(response);
+        }
     }
 
     // Minimal IAttachment stub - only DownloadImage's own fields (Url, Size, ContentType) matter here.

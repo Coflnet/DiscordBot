@@ -246,11 +246,25 @@ public sealed class IssueEvidenceService
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.TryAddWithoutValidation("Accept", "image/png,image/jpeg,image/gif");
+        request.Headers.TryAddWithoutValidation("User-Agent", "DiscordBot (https://github.com/Coflnet/DiscordBot, 1)");
         using var response = await httpClients.CreateClient("discord-evidence-images")
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         var contentType = response.Content.Headers.ContentType?.MediaType;
-        if (response.StatusCode != System.Net.HttpStatusCode.OK || response.Content.Headers.ContentLength > MaxImageBytes
-            || contentType is not ("image/png" or "image/jpeg" or "image/gif")) return null;
+        if (response.StatusCode != System.Net.HttpStatusCode.OK)
+        {
+            logger.LogInformation("Discord evidence image rejected: status_{Status}", (int)response.StatusCode);
+            return null;
+        }
+        if (response.Content.Headers.ContentLength > MaxImageBytes)
+        {
+            logger.LogInformation("Discord evidence image rejected: content_length");
+            return null;
+        }
+        if (contentType is not ("image/png" or "image/jpeg" or "image/gif"))
+        {
+            logger.LogInformation("Discord evidence image rejected: content_type");
+            return null;
+        }
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var output = new MemoryStream();
         var buffer = new byte[81920];
@@ -258,12 +272,21 @@ public sealed class IssueEvidenceService
         {
             var read = await stream.ReadAsync(buffer, cancellationToken);
             if (read == 0) break;
-            if (output.Length + read > MaxImageBytes) return null;
+            if (output.Length + read > MaxImageBytes)
+            {
+                logger.LogInformation("Discord evidence image rejected: body_length");
+                return null;
+            }
             output.Write(buffer, 0, read);
         }
         var data = output.ToArray();
         var detected = DetectedMediaType(data);
-        return detected == contentType ? (data, detected) : null;
+        if (detected != contentType)
+        {
+            logger.LogInformation("Discord evidence image rejected: detected_type");
+            return null;
+        }
+        return (data, detected);
     }
 
     // Bound to the exact type Discord declared for this attachment, not just any allowed image
@@ -272,8 +295,18 @@ public sealed class IssueEvidenceService
     internal async Task<byte[]?> DownloadImage(IAttachment attachment, CancellationToken cancellationToken)
     {
         var result = await DownloadIssueImage(attachment.Url, cancellationToken);
-        return result != null && result.Value.Data.Length == attachment.Size && result.Value.MediaType == attachment.ContentType
-            ? result.Value.Data : null;
+        if (result == null) return null;
+        if (result.Value.Data.Length != attachment.Size)
+        {
+            logger.LogInformation("Discord evidence image rejected: attachment_size");
+            return null;
+        }
+        if (result.Value.MediaType != attachment.ContentType)
+        {
+            logger.LogInformation("Discord evidence image rejected: attachment_type");
+            return null;
+        }
+        return result.Value.Data;
     }
 
     private static string BoundUtf8(string value, int limit, out int omitted)
