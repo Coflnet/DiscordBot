@@ -24,6 +24,8 @@ builder.Services.AddSingleton<DiscordHandler>();
 builder.Services.AddHostedService(di=> di.GetRequiredService<DiscordHandler>());
 builder.Services.AddSingleton<IssueEvidenceService>();
 builder.Services.AddSingleton<IssueDraftService>();
+builder.Services.AddHttpClient<CreatorOnboardingClient>();
+builder.Services.AddHttpClient<RewardLedgerClient>();
 builder.Services.AddHttpClient("discord-evidence-images")
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<IPlayerNameApi, PlayerNameApi>(di => new PlayerNameApi(builder.Configuration["PLAYERNAME_BASE_URL"]));
