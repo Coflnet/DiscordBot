@@ -19,20 +19,21 @@ public sealed class CreatorReviewCommands(
     ILogger<CreatorReviewCommands> logger) : InteractionModuleBase
 {
     internal const ulong ReviewerId = 267680402594988033;
+    private const string PrivacyNoticeVersion = "2026-09-04";
+    private const string ReviewRuleVersion = "creator-review-2026-09-04";
+    private const string DefaultReviewReason = "Manual application review completed";
     private static readonly Regex MessageLink = new(
-        @"^https://discord\.com/channels/(?<guild>[0-9]{17,20})/(?<channel>[0-9]{17,20})/(?<message>[0-9]{17,20})$",
+        @"^https://discord\.com/channels/(?<guild>@me|[0-9]{17,20})/(?<channel>[0-9]{17,20})/(?<message>[0-9]{17,20})$",
         RegexOptions.CultureInvariant);
 
     [SlashCommand("review", "Write an immutable Expert application review")]
     public async Task Review(
         [Summary("applicant", "Discord user who submitted the application")] IUser applicant,
         [Summary("application", "Exact Discord application-message link")] string application,
-        [Summary("decision", "Review outcome")] CreatorOnboardingStatus decision,
         [Summary("residence", "Residence country, ISO alpha-2")] string residenceCountry,
         [Summary("capacity", "Adult, or age 16+ with a legal representative")] CreatorCapacityStatus capacityStatus,
-        [Summary("privacy-notice", "Notice version shown when the application was collected")] string privacyNoticeVersion,
-        [Summary("rule-version", "Checklist/legal-rule version used")] string ruleVersion,
-        [Summary("reason", "Concise review rationale")] string reason,
+        [Summary("decision", "Optional override of the capacity-based outcome")] CreatorOnboardingStatus? decision = null,
+        [Summary("reason", "Optional concise review rationale")] string reason = DefaultReviewReason,
         [Summary("seller-type", "Individual or business")] CreatorSellerType sellerType = CreatorSellerType.Individual,
         [Summary("capacity-law", "Optional reviewed country/subdivision; defaults to residence")] string capacityJurisdiction = "",
         [Summary("representative", "Required separate Discord account for a minor")] IUser? representative = null,
@@ -60,6 +61,14 @@ public sealed class CreatorReviewCommands(
                     ephemeral: true);
                 return;
             }
+            decision ??= capacityStatus switch
+            {
+                CreatorCapacityStatus.Minor16PlusWithGuardian =>
+                    CreatorOnboardingStatus.Pending,
+                CreatorCapacityStatus.Insufficient =>
+                    CreatorOnboardingStatus.Rejected,
+                _ => CreatorOnboardingStatus.Approved
+            };
             if (capacityStatus == CreatorCapacityStatus.Minor16PlusWithGuardian
                 && (representative == null || representative.Id == applicant.Id))
             {
@@ -116,21 +125,21 @@ public sealed class CreatorReviewCommands(
                 Guid.NewGuid(),
                 account.Value.Info.UserId,
                 account.Value.MinecraftUuid,
-                decision,
+                decision.Value,
                 residenceCountry,
                 taxResidenceCountry,
                 sellerType,
                 capacityJurisdiction,
                 capacityStatus,
                 taxDocumentRoute,
-                privacyNoticeVersion,
+                PrivacyNoticeVersion,
                 verification,
                 representative == null ? null : $"discord:{representative.Id}",
                 null,
                 null,
                 evidence.Value.Reference,
                 evidence.Value.Sha256,
-                ruleVersion,
+                ReviewRuleVersion,
                 validUntilUtc,
                 reason,
                 latest?.Id);
@@ -148,7 +157,9 @@ public sealed class CreatorReviewCommands(
                 "Creator application review failed for Discord applicant {applicantId} by reviewer {reviewerId}",
                 applicant.Id, Context.User.Id);
             await FollowupAsync(
-                "The review was not stored. Check the supplied fields and service logs.",
+                exception is HttpRequestException { StatusCode: null }
+                    ? "The review service is unavailable, so nothing was stored. Check its connection and try again."
+                    : "The review was not stored. Check the supplied fields and service logs.",
                 ephemeral: true);
         }
     }
@@ -385,10 +396,10 @@ public sealed class CreatorReviewCommands(
         ulong applicantId)
     {
         if (!TryMessageLink(link, out var guildId, out var channelId, out var messageId)
-            || Context.Guild?.Id != guildId)
+            || guildId != 0 && Context.Guild?.Id != guildId)
         {
             await FollowupAsync(
-                "application must be an exact message link from this server.",
+                "application must be an exact Discord message link from this server or a bot-accessible DM.",
                 ephemeral: true);
             return null;
         }
@@ -396,7 +407,7 @@ public sealed class CreatorReviewCommands(
         if (message == null || message.Author.Id != applicantId)
         {
             await FollowupAsync(
-                "The application message was not found or was not authored by the applicant.",
+                "The bot cannot access that application message or it was not authored by the applicant.",
                 ephemeral: true);
             return null;
         }
@@ -415,7 +426,7 @@ public sealed class CreatorReviewCommands(
                 item.ContentType
             })
         });
-        return ($"discord:{guildId}:{channelId}:{messageId}",
+        return ($"discord:{(guildId == 0 ? "@me" : guildId.ToString())}:{channelId}:{messageId}",
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)))
                 .ToLowerInvariant());
     }
@@ -429,7 +440,8 @@ public sealed class CreatorReviewCommands(
         var match = MessageLink.Match(value ?? "");
         guildId = channelId = messageId = 0;
         if (!match.Success
-            || !ulong.TryParse(match.Groups["guild"].Value, out guildId)
+            || match.Groups["guild"].Value != "@me"
+                && !ulong.TryParse(match.Groups["guild"].Value, out guildId)
             || !ulong.TryParse(match.Groups["channel"].Value, out channelId)
             || !ulong.TryParse(match.Groups["message"].Value, out messageId))
             return false;

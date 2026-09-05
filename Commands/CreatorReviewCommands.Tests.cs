@@ -37,9 +37,10 @@ public class CreatorReviewCommandsTests
                     .Select(item => item.Name),
                 Is.EquivalentTo(new[]
                 {
-                    "applicant", "application", "decision", "residence",
-                    "capacity", "privacy-notice", "rule-version", "reason"
+                    "applicant", "application", "residence", "capacity"
                 }));
+            Assert.That(review.Parameters.Single(item => item.Name == "decision")
+                .IsRequired, Is.False);
             Assert.That(review.Parameters.Single(item => item.Name == "verification")
                 .IsRequired, Is.False);
             Assert.That(review.Parameters.Single(item => item.Name == "tax-document")
@@ -58,6 +59,12 @@ public class CreatorReviewCommandsTests
                 "https://discord.com/channels/12345678901234567/22345678901234567/32345678901234567",
                 out var guild, out var channel, out var message), Is.True);
             Assert.That(guild, Is.EqualTo(12345678901234567UL));
+            Assert.That(channel, Is.EqualTo(22345678901234567UL));
+            Assert.That(message, Is.EqualTo(32345678901234567UL));
+            Assert.That(CreatorReviewCommands.TryMessageLink(
+                "https://discord.com/channels/@me/22345678901234567/32345678901234567",
+                out guild, out channel, out message), Is.True);
+            Assert.That(guild, Is.Zero);
             Assert.That(channel, Is.EqualTo(22345678901234567UL));
             Assert.That(message, Is.EqualTo(32345678901234567UL));
             Assert.That(CreatorReviewCommands.TryMessageLink(
