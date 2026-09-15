@@ -151,7 +151,8 @@ public sealed class CreatorReviewCommands(
                 "Creator review {reviewId} set {status} for user {creatorUserId} by Discord reviewer {reviewerId}",
                 stored.Id, stored.Status, stored.CreatorUserId, Context.User.Id);
             await FollowupAsync(
-                $"Stored immutable review `{stored.Id}`: **{stored.Status}** for {applicant.Mention}.",
+                $"Stored immutable review `{stored.Id}`: **{stored.Status}** for {applicant.Mention}.\n"
+                + CreatorPublishing.Summary(stored, DateTime.UtcNow),
                 ephemeral: true);
         }
         catch (Exception exception)
@@ -282,7 +283,8 @@ public sealed class CreatorReviewCommands(
                 "Creator review {reviewId} changed to {status} for user {creatorUserId} by Discord reviewer {reviewerId}",
                 stored.Id, stored.Status, stored.CreatorUserId, Context.User.Id);
             await FollowupAsync(
-                $"Stored immutable status review `{stored.Id}`: **{stored.Status}** for {applicant.Mention}.",
+                $"Stored immutable status review `{stored.Id}`: **{stored.Status}** for {applicant.Mention}.\n"
+                + CreatorPublishing.Summary(stored, DateTime.UtcNow),
                 ephemeral: true);
         }
         catch (Exception exception)
@@ -319,6 +321,8 @@ public sealed class CreatorReviewCommands(
                     ? Color.Green
                     : Color.Orange)
                 .AddField("Status", review.Status, true)
+                .AddField("Minecraft", $"`{review.MinecraftUuid}`", true)
+                .AddField("Seller", review.SellerType, true)
                 .AddField("Residence / tax", $"{review.ResidenceCountry} / {review.TaxResidenceCountry}", true)
                 .AddField("Capacity", $"{review.CapacityStatus} ({review.CapacityJurisdiction})", true)
                 .AddField("Representative", review.CapacityStatus != CreatorCapacityStatus.Minor16PlusWithGuardian
@@ -327,6 +331,8 @@ public sealed class CreatorReviewCommands(
                 .AddField("Payout route", review.TaxDocumentRoute == CreatorTaxDocumentRoute.NotApplicable
                     ? "not completed"
                     : review.TaxDocumentRoute, true)
+                .AddField("Config selling",
+                    CreatorPublishing.Summary(review, DateTime.UtcNow))
                 .AddField("Privacy notice", review.PrivacyNoticeVersion)
                 .AddField("Rule", review.RuleVersion)
                 .AddField("Evidence", review.EvidenceReference)

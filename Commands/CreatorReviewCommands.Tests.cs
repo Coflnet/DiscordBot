@@ -213,6 +213,86 @@ public class CreatorReviewCommandsTests
         });
     }
 
+    [Test]
+    public void PaidSellingBlockersNameTheFieldToCorrect()
+    {
+        var uk = Review() with
+        {
+            ResidenceCountry = "GB",
+            TaxResidenceCountry = "GB",
+            CapacityJurisdiction = "GB-ENG",
+            TaxDocumentRoute = CreatorTaxDocumentRoute.UkSelfBilling
+        };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(CreatorPublishing.PaidSellingBlockers(uk).Single(),
+                Does.Contain("tax-document").And.Contain("UkSelfBilling")
+                    .And.Contain("Individual").And.Contain("use Statement"));
+            Assert.That(CreatorPublishing.PaidSellingBlockers(uk with
+                {
+                    SellerType = CreatorSellerType.Business
+                }), Is.Empty);
+            Assert.That(CreatorPublishing.PaidSellingBlockers(uk with
+                {
+                    SellerType = CreatorSellerType.Business,
+                    VerificationReference = null
+                }).Single(), Does.Contain("verification"));
+            Assert.That(CreatorPublishing.PaidSellingBlockers(uk with
+                {
+                    TaxDocumentRoute = CreatorTaxDocumentRoute.Statement,
+                    CapacityJurisdiction = "GB"
+                }).Single(),
+                Does.Contain("capacity-law").And.Contain("GB-ENG"));
+            Assert.That(CreatorPublishing.PaidSellingBlockers(Review() with
+                {
+                    ResidenceCountry = "UK",
+                    TaxResidenceCountry = "UK",
+                    CapacityJurisdiction = "UK"
+                }).Select(item => item.Split(' ')[0]),
+                Is.EquivalentTo(new[] { "residence", "tax", "`capacity-law`", "`tax-document`" }));
+            Assert.That(CreatorPublishing.PaidSellingBlockers(Review() with
+                {
+                    TaxDocumentRoute = CreatorTaxDocumentRoute.NotApplicable
+                }).Single(), Does.Contain("tax-document").And.Contain("unset"));
+            Assert.That(CreatorPublishing.PaidSellingBlockers(Review()), Is.Empty);
+        });
+    }
+
+    [Test]
+    public void TheReviewSummaryStatesWhetherSellingWorks()
+    {
+        var now = DateTime.UtcNow;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(CreatorPublishing.Summary(Review(), now),
+                Does.Contain("Paid selling is enabled")
+                    .And.Contain("e7246661de77474f94627fabf9880f60"));
+            Assert.That(CreatorPublishing.Summary(Review() with
+                {
+                    TaxDocumentRoute = CreatorTaxDocumentRoute.NotApplicable
+                }, now),
+                Does.StartWith("Free Configs").And.Contain("paid selling is blocked"));
+            Assert.That(CreatorPublishing.Summary(Review() with
+                {
+                    Status = CreatorOnboardingStatus.Pending
+                }, now),
+                Does.StartWith("Publishing Configs is **blocked**")
+                    .And.Contain("only Approved may publish"));
+            Assert.That(CreatorPublishing.PublishingBlockers(Review() with
+                {
+                    ValidUntilUtc = now.AddDays(-1)
+                }, now).Single(), Does.Contain("expired"));
+            Assert.That(CreatorPublishing.PublishingBlockers(Review() with
+                {
+                    CapacityStatus = CreatorCapacityStatus.Minor16PlusWithGuardian,
+                    RepresentativeAccountId = "discord:9"
+                }, now).Single(), Does.Contain("request-guardian"));
+            Assert.That(CreatorPublishing.PublishingBlockers(Review(), now), Is.Empty);
+        });
+    }
+
     private static CreatorReview Review() => new(
         Guid.NewGuid(), "creator", "e7246661de77474f94627fabf9880f60",
         CreatorOnboardingStatus.Approved, "DE", "DE",

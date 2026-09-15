@@ -285,3 +285,156 @@ public sealed record CreatorAgreement(
     string Version,
     string LicenseUrl,
     string Locale);
+
+/// <summary>
+/// Explains, from a stored review alone, why the reviewed creator may not
+/// publish or may not sell paid Configs. The rules mirror
+/// <c>CreatorOnboardingService.GetEligibility</c> in SkyReferral, which stays
+/// the authority: keep both in sync when the seller territories change.
+/// </summary>
+public static class CreatorPublishing
+{
+    private static readonly string[] EuCountries =
+    [
+        "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
+        "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
+        "PL", "PT", "RO", "SK", "SI", "ES", "SE"
+    ];
+
+    /// <summary>
+    /// Reasons the creator may not publish any Config, free ones included.
+    /// </summary>
+    public static IReadOnlyList<string> PublishingBlockers(
+        CreatorReview review,
+        DateTime utcNow)
+    {
+        var blockers = new List<string>();
+        if (review.Status != CreatorOnboardingStatus.Approved)
+            blockers.Add(
+                $"the review is {review.Status}, only Approved may publish");
+        if (review.ValidUntilUtc <= utcNow)
+            blockers.Add(
+                $"the approval expired {review.ValidUntilUtc:yyyy-MM-dd}");
+        if (review.CapacityStatus == CreatorCapacityStatus.Insufficient)
+            blockers.Add("the declared capacity is insufficient");
+        if (review.CapacityStatus == CreatorCapacityStatus.Minor16PlusWithGuardian
+            && review.RepresentativeAcceptedAtUtc == null)
+            blockers.Add(
+                "the legal representative has not accepted yet, send `/creator request-guardian`");
+        if (review.CapacityStatus == CreatorCapacityStatus.AdultDeclared
+            && review.RepresentativeAccountId != null)
+            blockers.Add("an adult review must not carry a representative account");
+        return blockers;
+    }
+
+    /// <summary>
+    /// Reasons a publishable creator may still only offer free Configs.
+    /// </summary>
+    public static IReadOnlyList<string> PaidSellingBlockers(CreatorReview review)
+    {
+        var blockers = new List<string>();
+        if (review.TaxDocumentRoute == CreatorTaxDocumentRoute.NotApplicable)
+            blockers.Add(
+                "`tax-document` is unset, so no payout route was reviewed");
+        if (!PaidCountry(review.ResidenceCountry))
+            blockers.Add(
+                $"residence {review.ResidenceCountry} is not a paid seller country (GB, US, CH or EU)");
+        if (!PaidCountry(review.TaxResidenceCountry))
+            blockers.Add(
+                $"tax residence {review.TaxResidenceCountry} is not a paid seller country (GB, US, CH or EU)");
+        if (!PaidCapacityJurisdiction(
+                review.ResidenceCountry,
+                review.CapacityJurisdiction,
+                review.SellerType))
+            blockers.Add(
+                $"`capacity-law` {review.CapacityJurisdiction} is not paid-supported ({ExpectedJurisdictions(review.ResidenceCountry)})");
+        if (review.TaxDocumentRoute != CreatorTaxDocumentRoute.NotApplicable
+            && !ValidTaxRoute(
+                review.TaxResidenceCountry,
+                review.SellerType,
+                review.TaxDocumentRoute))
+            blockers.Add(
+                $"`tax-document` {review.TaxDocumentRoute} does not fit {review.SellerType} sellers in {review.TaxResidenceCountry} ({ExpectedRoutes(review.TaxResidenceCountry, review.SellerType)})");
+        if (review.SellerType == CreatorSellerType.Business
+            && review.VerificationReference == null)
+            blockers.Add("a business seller needs a `verification` reference");
+        return blockers;
+    }
+
+    /// <summary>
+    /// One line a reviewer can act on, stating whether selling Configs works.
+    /// </summary>
+    public static string Summary(CreatorReview review, DateTime utcNow)
+    {
+        var publishing = PublishingBlockers(review, utcNow);
+        if (publishing.Count > 0)
+            return "Publishing Configs is **blocked**: "
+                + $"{string.Join("; ", publishing)}.";
+        var paid = PaidSellingBlockers(review);
+        return paid.Count > 0
+            ? $"Free Configs from `{review.MinecraftUuid}` are allowed, "
+                + $"**paid selling is blocked**: {string.Join("; ", paid)}."
+            : $"**Paid selling is enabled** from `{review.MinecraftUuid}` only; "
+                + "the creator must still accept the Creator agreement in game.";
+    }
+
+    private static bool PaidCountry(string country) =>
+        country is "GB" or "US" or "CH" || EuCountries.Contains(country);
+
+    private static bool PaidCapacityJurisdiction(
+        string country,
+        string jurisdiction,
+        CreatorSellerType sellerType)
+    {
+        var supported = jurisdiction is "GB-ENG" or "GB-WLS" or "CH" or "US"
+            || jurisdiction.Length == 5 && jurisdiction.StartsWith("US-")
+            || jurisdiction.Length == 2 && EuCountries.Contains(jurisdiction);
+        if (!supported || sellerType == CreatorSellerType.Business)
+            return supported;
+        return country switch
+        {
+            "GB" => jurisdiction.StartsWith("GB-"),
+            "US" => jurisdiction == "US" || jurisdiction.StartsWith("US-"),
+            _ => jurisdiction == country
+        };
+    }
+
+    private static bool ValidTaxRoute(
+        string country,
+        CreatorSellerType sellerType,
+        CreatorTaxDocumentRoute route) => country switch
+        {
+            "GB" => sellerType == CreatorSellerType.Business
+                ? route is CreatorTaxDocumentRoute.Statement
+                    or CreatorTaxDocumentRoute.UkSelfBilling
+                : route == CreatorTaxDocumentRoute.Statement,
+            "US" => route == CreatorTaxDocumentRoute.UsSettlement,
+            _ when country is "CH" || EuCountries.Contains(country) =>
+                route == (sellerType == CreatorSellerType.Business
+                    ? CreatorTaxDocumentRoute.CreatorInvoice
+                    : CreatorTaxDocumentRoute.Statement),
+            _ => false
+        };
+
+    private static string ExpectedJurisdictions(string country) => country switch
+    {
+        "GB" => "use GB-ENG or GB-WLS",
+        "US" => "use US or US-XX",
+        _ => $"use {country}"
+    };
+
+    private static string ExpectedRoutes(
+        string country,
+        CreatorSellerType sellerType) => country switch
+    {
+        "GB" => sellerType == CreatorSellerType.Business
+            ? "use Statement or UkSelfBilling"
+            : "use Statement",
+        "US" => "use UsSettlement",
+        _ when country is "CH" || EuCountries.Contains(country) =>
+            sellerType == CreatorSellerType.Business
+                ? "use CreatorInvoice"
+                : "use Statement",
+        _ => "no paid route exists for that country"
+    };
+}
