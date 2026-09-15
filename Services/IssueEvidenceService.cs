@@ -15,6 +15,11 @@ public sealed class IssueEvidenceService
     internal const int MaxImages = 5;
     internal const int MaxImageBytes = 10 << 20;
     internal const int MaxTotalImageBytes = 25 << 20;
+    // A binding carries no other access control - this is the only thing bounding how long its
+    // read capability into one Discord thread stays honoured. 60 days is long enough that an issue
+    // assigned weeks after filing still resolves, short enough that a marker leaked from an issue
+    // body is not a standing capability forever.
+    internal static readonly TimeSpan BindingLifetime = TimeSpan.FromDays(60);
     // Any repository in the Coflnet org is a valid evidence target. What bounds the blast radius is
     // the binding itself - it names one exact issue and one exact Discord message, and the fetch is
     // separately authenticated with the client key - not an enumerated repo list, which only ever
@@ -103,7 +108,7 @@ public sealed class IssueEvidenceService
             || payload.SourceKind is not (null or "" or "bot-dm-mirror")
             || (payload.SourceKind == "bot-dm-mirror" && !(guildId == 0 && recipient != 0))
             || !DateTimeOffset.TryParse(payload.CreatedAt, out var created) || created > now().AddMinutes(1)
-            || created < now().AddDays(-14) || FromBase64Url(payload.Nonce).Length != 16)
+            || created < now() - BindingLifetime || FromBase64Url(payload.Nonce).Length != 16)
             throw new EvidenceDenied("binding_mismatch_or_expired");
         return payload;
     }

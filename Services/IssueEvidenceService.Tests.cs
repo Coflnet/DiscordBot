@@ -32,8 +32,24 @@ public sealed class IssueEvidenceServiceTests
             Assert.Throws<EvidenceDenied>(() => service.ValidateBinding(binding, "Coflnet/SkyModCommands", 435));
             Assert.Throws<EvidenceDenied>(() => service.ValidateBinding(binding, "Coflnet/SkyApi", 434));
             Assert.Throws<EvidenceDenied>(() => service.ValidateBinding(binding[..20] + (binding[20] == 'a' ? "b" : "a") + binding[21..], "Coflnet/SkyModCommands", 434));
-            Assert.Throws<EvidenceDenied>(() => Service(Now.AddDays(15)).ValidateBinding(binding, "Coflnet/SkyModCommands", 434));
+            Assert.Throws<EvidenceDenied>(() => Service(Now.AddDays(61)).ValidateBinding(binding, "Coflnet/SkyModCommands", 434));
         });
+    }
+
+    // Regression: GitHub issues filed more than 14 days before an agent task got assigned to them
+    // could never retrieve their Discord context (Coflnet/SkyCrafts#48, Coflnet/hypixel-react#1543,
+    // #1545), each surfacing only as binding_mismatch_or_expired. A binding roughly a month old -
+    // squarely inside the 60-day lifetime and outside the old 14-day one - must still validate.
+    [Test]
+    public void BindingValidatesWellPastTheOldFourteenDayWindow()
+    {
+        var service = Service();
+        var binding = service.CreateBinding("Coflnet/SkyModCommands", 434,
+            IssueEvidenceService.CoflnetGuildId, 1540465169019179128, 1540479250002354246);
+
+        var payload = Service(Now.AddDays(30)).ValidateBinding(binding, "Coflnet/SkyModCommands", 434);
+
+        Assert.That(payload.MessageId, Is.EqualTo("1540479250002354246"));
     }
 
     [Test]
