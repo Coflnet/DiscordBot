@@ -1,5 +1,6 @@
 using System.Net;
 using System.Runtime.CompilerServices;
+using Coflnet.Sky.McConnect.Api;
 using System.Text.Json;
 using Discord.Interactions;
 using Discord.Rest;
@@ -21,6 +22,8 @@ public class CreatorReviewCommandsTests
                 typeof(Persistence)))
             .AddSingleton((DiscordHandler)RuntimeHelpers.GetUninitializedObject(
                 typeof(DiscordHandler)))
+            .AddSingleton<IConnectApi>((ConnectApi)RuntimeHelpers
+                .GetUninitializedObject(typeof(ConnectApi)))
             .AddSingleton((CreatorOnboardingClient)RuntimeHelpers.GetUninitializedObject(
                 typeof(CreatorOnboardingClient)))
             .BuildServiceProvider();
@@ -47,6 +50,50 @@ public class CreatorReviewCommandsTests
                 .IsRequired, Is.False);
             Assert.That(review.Parameters.Any(item => item.Name == "adult-from"),
                 Is.False);
+            Assert.That(review.Parameters.Single(item => item.Name == "minecraft-uuid")
+                .IsRequired, Is.False);
+        });
+    }
+
+    [Test]
+    public void AReviewedMinecraftUuidDoesNotNeedALinkedDiscordAccount()
+    {
+        var primary = Guid.Parse("e7246661de77474f94627fabf9880f60");
+        var secondary = Guid.Parse("f7246661de77474f94627fabf9880f61");
+        var linked = new DiscordAccountInfo
+        {
+            UserId = "12",
+            MinecraftUuid = primary,
+            MinecraftUuids = [primary, secondary]
+        };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(CreatorReviewCommands.SelectIdentity(
+                    null, primary.ToString("N"), out var reviewed),
+                Is.EqualTo(CreatorReviewCommands.CreatorIdentitySource.ReviewedUuid));
+            Assert.That(reviewed, Is.EqualTo(primary));
+            Assert.That(CreatorReviewCommands.SelectIdentity(
+                    new DiscordAccountInfo(), primary.ToString(), out reviewed),
+                Is.EqualTo(CreatorReviewCommands.CreatorIdentitySource.ReviewedUuid));
+            Assert.That(reviewed, Is.EqualTo(primary));
+            Assert.That(CreatorReviewCommands.SelectIdentity(null, "", out _),
+                Is.EqualTo(CreatorReviewCommands.CreatorIdentitySource.Unlinked));
+            Assert.That(CreatorReviewCommands.SelectIdentity(
+                    new DiscordAccountInfo { UserId = "12" }, "", out _),
+                Is.EqualTo(CreatorReviewCommands.CreatorIdentitySource.Unlinked));
+            Assert.That(CreatorReviewCommands.SelectIdentity(linked, "", out var stored),
+                Is.EqualTo(CreatorReviewCommands.CreatorIdentitySource.LinkedAccount));
+            Assert.That(stored, Is.EqualTo(primary));
+            Assert.That(CreatorReviewCommands.SelectIdentity(
+                    linked, secondary.ToString("N"), out stored),
+                Is.EqualTo(CreatorReviewCommands.CreatorIdentitySource.LinkedAccount));
+            Assert.That(stored, Is.EqualTo(secondary));
+            Assert.That(CreatorReviewCommands.SelectIdentity(linked, "not-a-uuid", out _),
+                Is.EqualTo(CreatorReviewCommands.CreatorIdentitySource.Invalid));
+            Assert.That(CreatorReviewCommands.SelectIdentity(
+                    linked, Guid.Empty.ToString("N"), out _),
+                Is.EqualTo(CreatorReviewCommands.CreatorIdentitySource.Invalid));
         });
     }
 
@@ -139,6 +186,33 @@ public class CreatorReviewCommandsTests
         });
     }
 
+    [Test]
+    public void ReviewClientReturnsSafeValidationMessage()
+    {
+        var handler = new Handler(
+            "{\"slug\":\"reward\",\"message\":\"The tax document route does not match the tax residence\"}",
+            HttpStatusCode.BadRequest);
+        var client = new CreatorOnboardingClient(
+            new HttpClient(handler),
+            new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["REFERRAL_BASE_URL"] = "https://referral.invalid",
+                    ["CREATOR_ONBOARDING:REVIEW_TOKEN"] = new string('a', 32)
+                }).Build());
+
+        var exception = Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.Append(Review().Next(
+                CreatorOnboardingStatus.Approved, "review"), 42));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(exception!.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(exception.Message,
+                Is.EqualTo("The tax document route does not match the tax residence"));
+        });
+    }
+
     private static CreatorReview Review() => new(
         Guid.NewGuid(), "creator", "e7246661de77474f94627fabf9880f60",
         CreatorOnboardingStatus.Approved, "DE", "DE",
@@ -151,7 +225,9 @@ public class CreatorReviewCommandsTests
         DateTime.UtcNow, "rules-v1", DateTime.UtcNow.AddYears(1),
         "checklist complete");
 
-    private sealed class Handler(string body) : HttpMessageHandler
+    private sealed class Handler(
+        string body,
+        HttpStatusCode statusCode = HttpStatusCode.OK) : HttpMessageHandler
     {
         public string? Path { get; private set; }
         public string? Token { get; private set; }
@@ -166,7 +242,7 @@ public class CreatorReviewCommandsTests
             Token = request.Headers.Authorization?.Parameter;
             Reviewer = request.Headers.GetValues("X-Reviewer-Id").Single();
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
-            return new(HttpStatusCode.OK)
+            return new(statusCode)
             {
                 Content = new StringContent(body, System.Text.Encoding.UTF8,
                     "application/json")

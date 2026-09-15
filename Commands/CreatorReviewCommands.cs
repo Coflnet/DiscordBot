@@ -1,8 +1,10 @@
 using System.Globalization;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Coflnet.Sky.McConnect.Api;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
@@ -15,6 +17,7 @@ namespace Coflnet.Discord;
 public sealed class CreatorReviewCommands(
     Persistence persistence,
     DiscordHandler discord,
+    IConnectApi connect,
     CreatorOnboardingClient onboarding,
     ILogger<CreatorReviewCommands> logger) : InteractionModuleBase
 {
@@ -38,7 +41,7 @@ public sealed class CreatorReviewCommands(
         [Summary("capacity-law", "Optional reviewed country/subdivision; defaults to residence")] string capacityJurisdiction = "",
         [Summary("representative", "Required separate Discord account for a minor")] IUser? representative = null,
         [Summary("tax-residence", "Optional paid-sale ISO country; defaults to residence")] string taxResidenceCountry = "",
-        [Summary("tax-document", "Required only to enable paid publication")] CreatorTaxDocumentRoute taxDocumentRoute = CreatorTaxDocumentRoute.NotApplicable,
+        [Summary("tax-document", "Paid only: EU/GB/CH individual=Statement; US=UsSettlement")] CreatorTaxDocumentRoute taxDocumentRoute = CreatorTaxDocumentRoute.NotApplicable,
         [Summary("verification", "Optional opaque payout-verification reference")] string verificationReference = "",
         [Summary("valid-until", "Optional exclusive UTC expiry: yyyy-MM-dd")] string validUntil = "",
         [Summary("minecraft-uuid", "Optional linked UUID; defaults to the primary UUID")] string minecraftUuid = "")
@@ -102,7 +105,7 @@ public sealed class CreatorReviewCommands(
                 return;
             }
 
-            var latest = await onboarding.GetLatest(account.Value.Info.UserId);
+            var latest = await onboarding.GetLatest(account.Value.UserId);
             taxResidenceCountry = string.IsNullOrWhiteSpace(taxResidenceCountry)
                 ? residenceCountry
                 : taxResidenceCountry;
@@ -123,7 +126,7 @@ public sealed class CreatorReviewCommands(
                 : verificationReference;
             var request = new CreatorReviewRequest(
                 Guid.NewGuid(),
-                account.Value.Info.UserId,
+                account.Value.UserId,
                 account.Value.MinecraftUuid,
                 decision.Value,
                 residenceCountry,
@@ -159,6 +162,8 @@ public sealed class CreatorReviewCommands(
             await FollowupAsync(
                 exception is HttpRequestException { StatusCode: null }
                     ? "The review service is unavailable, so nothing was stored. Check its connection and try again."
+                    : exception is HttpRequestException { StatusCode: HttpStatusCode.BadRequest }
+                        ? $"The review was rejected: {exception.Message}"
                     : "The review was not stored. Check the supplied fields and service logs.",
                 ephemeral: true);
         }
@@ -167,17 +172,18 @@ public sealed class CreatorReviewCommands(
     [SlashCommand("request-guardian", "Send the current Creator agreement to the reviewed guardian")]
     public async Task RequestGuardian(
         [Summary("applicant", "Minor creator with a pending review")] IUser applicant,
-        [Summary("language", "Agreement language: en or de")] string language = "en")
+        [Summary("language", "Agreement language: en or de")] string language = "en",
+        [Summary("minecraft-uuid", "Optional reviewed UUID; required without a linked account")] string minecraftUuid = "")
     {
         if (!await RequireReviewer())
             return;
         await DeferAsync(ephemeral: true);
         try
         {
-            var account = await Account(applicant, "");
+            var account = await Account(applicant, minecraftUuid);
             if (account == null)
                 return;
-            var review = await onboarding.GetLatest(account.Value.Info.UserId);
+            var review = await onboarding.GetLatest(account.Value.UserId);
             if (review == null
                 || review.Status != CreatorOnboardingStatus.Pending
                 || review.CapacityStatus != CreatorCapacityStatus.Minor16PlusWithGuardian
@@ -247,14 +253,15 @@ public sealed class CreatorReviewCommands(
         [Summary("applicant", "Reviewed Discord applicant")] IUser applicant,
         [Summary("decision", "New review status")] CreatorOnboardingStatus decision,
         [Summary("reason", "Reason for the status change")] string reason,
-        [Summary("valid-until", "Optional replacement exclusive UTC expiry: yyyy-MM-dd")] string validUntil = "")
+        [Summary("valid-until", "Optional replacement exclusive UTC expiry: yyyy-MM-dd")] string validUntil = "",
+        [Summary("minecraft-uuid", "Optional reviewed UUID; required without a linked account")] string minecraftUuid = "")
     {
         if (!await RequireReviewer())
             return;
         await DeferAsync(ephemeral: true);
         try
         {
-            var account = await Account(applicant, "");
+            var account = await Account(applicant, minecraftUuid);
             if (account == null)
                 return;
             if (!TryOptionalUtcDate(validUntil, out var validUntilUtc))
@@ -262,7 +269,7 @@ public sealed class CreatorReviewCommands(
                 await FollowupAsync("valid-until must use `yyyy-MM-dd`.", ephemeral: true);
                 return;
             }
-            var latest = await onboarding.GetLatest(account.Value.Info.UserId);
+            var latest = await onboarding.GetLatest(account.Value.UserId);
             if (latest == null)
             {
                 await FollowupAsync("This applicant has no prior review.", ephemeral: true);
@@ -289,17 +296,18 @@ public sealed class CreatorReviewCommands(
 
     [SlashCommand("show", "Show the latest immutable Expert application review")]
     public async Task Show(
-        [Summary("applicant", "Reviewed Discord applicant")] IUser applicant)
+        [Summary("applicant", "Reviewed Discord applicant")] IUser applicant,
+        [Summary("minecraft-uuid", "Optional reviewed UUID; required without a linked account")] string minecraftUuid = "")
     {
         if (!await RequireReviewer())
             return;
         await DeferAsync(ephemeral: true);
         try
         {
-            var account = await Account(applicant, "");
+            var account = await Account(applicant, minecraftUuid);
             if (account == null)
                 return;
-            var review = await onboarding.GetLatest(account.Value.Info.UserId);
+            var review = await onboarding.GetLatest(account.Value.UserId);
             if (review == null)
             {
                 await FollowupAsync("This applicant has no review.", ephemeral: true);
@@ -360,35 +368,81 @@ public sealed class CreatorReviewCommands(
                 : "",
             out id);
 
-    private async Task<(DiscordAccountInfo Info, string MinecraftUuid)?> Account(
+    private async Task<(string UserId, string MinecraftUuid)?> Account(
         IUser applicant,
         string minecraftUuid)
     {
         var account = await persistence.GetDiscordAccountInfo(applicant.Id);
-        if (account == null || string.IsNullOrWhiteSpace(account.UserId))
-        {
-            await FollowupAsync(
-                "The applicant must link a verified Minecraft account first.",
-                ephemeral: true);
-            return null;
-        }
-        var selected = account.MinecraftUuid;
-        if (!string.IsNullOrWhiteSpace(minecraftUuid)
-            && !Guid.TryParse(minecraftUuid, out selected))
+        var source = SelectIdentity(account, minecraftUuid, out var selected);
+        if (source == CreatorIdentitySource.Invalid)
         {
             await FollowupAsync("minecraft-uuid is invalid.", ephemeral: true);
             return null;
         }
-        if (selected == Guid.Empty
-            || selected != account.MinecraftUuid
-                && account.MinecraftUuids?.Contains(selected) != true)
+        if (source == CreatorIdentitySource.Unlinked)
         {
             await FollowupAsync(
-                "That Minecraft UUID is not linked to the applicant.",
+                "The applicant must link a verified Minecraft account first, or pass the reviewed minecraft-uuid.",
                 ephemeral: true);
             return null;
         }
-        return (account, selected.ToString("N"));
+        if (source == CreatorIdentitySource.LinkedAccount)
+            return (account!.UserId, selected.ToString("N"));
+        var owner = await connect.ConnectMinecraftMcUuidGetAsync(
+            selected.ToString("N"));
+        if (string.IsNullOrWhiteSpace(owner?.ExternalId))
+        {
+            await FollowupAsync(
+                "No verified Coflnet account owns that Minecraft UUID.",
+                ephemeral: true);
+            return null;
+        }
+        if (!string.IsNullOrWhiteSpace(account?.UserId)
+            && !string.Equals(
+                account.UserId, owner.ExternalId, StringComparison.Ordinal))
+        {
+            await FollowupAsync(
+                "That Minecraft UUID belongs to a different Coflnet account than the one linked to the applicant.",
+                ephemeral: true);
+            return null;
+        }
+        return (owner.ExternalId, selected.ToString("N"));
+    }
+
+    internal enum CreatorIdentitySource
+    {
+        Invalid,
+        Unlinked,
+        LinkedAccount,
+        ReviewedUuid
+    }
+
+    /// <summary>
+    /// Picks the reviewed Minecraft account. A reviewer-supplied UUID is
+    /// authoritative, so its verified Coflnet owner is resolved directly and the
+    /// applicant does not need a linked Discord account.
+    /// </summary>
+    internal static CreatorIdentitySource SelectIdentity(
+        DiscordAccountInfo? account,
+        string minecraftUuid,
+        out Guid selected)
+    {
+        selected = Guid.Empty;
+        var linked = !string.IsNullOrWhiteSpace(account?.UserId);
+        if (string.IsNullOrWhiteSpace(minecraftUuid))
+        {
+            if (!linked || account!.MinecraftUuid == Guid.Empty)
+                return CreatorIdentitySource.Unlinked;
+            selected = account.MinecraftUuid;
+            return CreatorIdentitySource.LinkedAccount;
+        }
+        if (!Guid.TryParse(minecraftUuid, out selected) || selected == Guid.Empty)
+            return CreatorIdentitySource.Invalid;
+        return linked
+            && (selected == account!.MinecraftUuid
+                || account.MinecraftUuids?.Contains(selected) == true)
+            ? CreatorIdentitySource.LinkedAccount
+            : CreatorIdentitySource.ReviewedUuid;
     }
 
     private async Task<(string Reference, string Sha256)?> Evidence(

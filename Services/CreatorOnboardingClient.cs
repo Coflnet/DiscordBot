@@ -54,7 +54,7 @@ public sealed class CreatorOnboardingClient(
         using var response = await http.SendAsync(request, cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccess(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<CreatorReview>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
@@ -74,7 +74,7 @@ public sealed class CreatorOnboardingClient(
         request.Headers.Add("X-Reviewer-Id", $"discord:{reviewerDiscordId}");
         request.Content = JsonContent.Create(review);
         using var response = await http.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccess(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<CreatorReview>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
@@ -102,7 +102,7 @@ public sealed class CreatorOnboardingClient(
             locale
         });
         using var response = await http.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccess(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<CreatorReview>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
@@ -188,6 +188,23 @@ public sealed class CreatorOnboardingClient(
     private static bool IsSha256(string? value) =>
         value?.Length == 64 && value.All(Uri.IsHexDigit);
 
+    private static async Task EnsureSuccess(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        if (response.IsSuccessStatusCode)
+            return;
+        if (response.StatusCode == HttpStatusCode.BadRequest)
+        {
+            var error = await response.Content.ReadFromJsonAsync<ErrorResponse>(
+                cancellationToken: cancellationToken);
+            if (!string.IsNullOrWhiteSpace(error?.Message))
+                throw new HttpRequestException(
+                    error.Message, null, response.StatusCode);
+        }
+        response.EnsureSuccessStatusCode();
+    }
+
     private static void RequireCoflnetUri(Uri uri)
     {
         if (uri.Scheme != Uri.UriSchemeHttps
@@ -197,6 +214,8 @@ public sealed class CreatorOnboardingClient(
                 "Legal documents must use the Coflnet HTTPS origin.");
     }
 }
+
+file sealed record ErrorResponse(string Message);
 
 public record CreatorReviewRequest(
     Guid ReviewId,
