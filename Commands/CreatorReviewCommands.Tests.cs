@@ -26,13 +26,17 @@ public class CreatorReviewCommandsTests
                 .GetUninitializedObject(typeof(ConnectApi)))
             .AddSingleton((CreatorOnboardingClient)RuntimeHelpers.GetUninitializedObject(
                 typeof(CreatorOnboardingClient)))
+            .AddSingleton((RewardLedgerClient)RuntimeHelpers.GetUninitializedObject(
+                typeof(RewardLedgerClient)))
             .BuildServiceProvider();
         var module = await interactions.AddModuleAsync<CreatorReviewCommands>(
             services);
 
         Assert.That(module.SlashCommands.Select(item => item.Name),
             Is.EquivalentTo(new[]
-                { "review", "request-guardian", "set-status", "show" }));
+                { "balance", "review", "request-guardian", "set-status", "show" }));
+        Assert.That(module.SlashCommands.Single(item => item.Name == "balance").Parameters,
+            Is.Empty, "Creators must only query their own linked account.");
         var review = module.SlashCommands.Single(item => item.Name == "review");
         Assert.Multiple(() =>
         {

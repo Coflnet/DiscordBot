@@ -19,6 +19,7 @@ public sealed class CreatorReviewCommands(
     DiscordHandler discord,
     IConnectApi connect,
     CreatorOnboardingClient onboarding,
+    RewardLedgerClient rewards,
     ILogger<CreatorReviewCommands> logger) : InteractionModuleBase
 {
     internal const ulong ReviewerId = 267680402594988033;
@@ -28,6 +29,38 @@ public sealed class CreatorReviewCommands(
     private static readonly Regex MessageLink = new(
         @"^https://discord\.com/channels/(?<guild>@me|[0-9]{17,20})/(?<channel>[0-9]{17,20})/(?<message>[0-9]{17,20})$",
         RegexOptions.CultureInvariant);
+
+    [SlashCommand("balance", "Check your creator earnings balance")]
+    public async Task Balance()
+    {
+        await DeferAsync(ephemeral: true);
+        try
+        {
+            var account = await persistence.GetDiscordAccountInfo(Context.User.Id);
+            if (string.IsNullOrWhiteSpace(account?.UserId))
+            {
+                await FollowupAsync("Use `/update-mc-user` to link your account first.", ephemeral: true);
+                return;
+            }
+
+            var balance = await rewards.GetBalance(account.UserId);
+            await FollowupAsync(FormattableString.Invariant($"""
+                **Your creator balance (EUR)**
+                Pending: **€{balance.PendingEurCents / 100m:F2}**
+                Outstanding: **€{balance.OutstandingEurCents / 100m:F2}**
+                Reserved for payout: **€{balance.ReservedEurCents / 100m:F2}**
+                Available: **€{balance.AvailableEurCents / 100m:F2}**
+                Payout threshold: **€{balance.PayoutThresholdEurCents / 100m:F2}**
+
+                This balance includes any report and referral rewards on the same account.
+                """), ephemeral: true);
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Creator balance lookup failed for Discord user {userId}", Context.User.Id);
+            await FollowupAsync("Your balance could not be loaded. Please try again later.", ephemeral: true);
+        }
+    }
 
     [SlashCommand("review", "Write an immutable Expert application review")]
     public async Task Review(

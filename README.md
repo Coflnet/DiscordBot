@@ -1,5 +1,11 @@
 Coflnet Discord Bot
 
+`/creator balance` privately shows the caller's linked account balance in EUR:
+pending, outstanding, reserved for payout, available, and payout threshold.
+Creators can link their account with `/update-mc-user`. The balance includes
+report and referral rewards on the same account and uses the existing
+`REFERRAL_BASE_URL` and `REWARDS:WRITE_TOKEN` configuration.
+
 The `/creator review`, `/creator request-guardian`, `/creator set-status`, and
 `/creator show` commands are restricted at runtime solely to Discord account
 `267680402594988033`.
