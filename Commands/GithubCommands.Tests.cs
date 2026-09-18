@@ -190,7 +190,7 @@ public class GitRepoAutocompleteHandlerTests
     }
 
     [Test]
-    public void CurrentDirectMessageLinkStillRequiresDmAuthorization()
+    public void CurrentDirectMessageLinkIsRecognizedAsPrivateContext()
     {
         const ulong channel = 1535522079699509299;
         var exact = GithubCommands.ResolveMessageInput("", "https://discord.com/channels/@me/1535522079699509299/1540607865847418932", null, channel);
@@ -199,14 +199,10 @@ public class GitRepoAutocompleteHandlerTests
     }
 
     [Test]
-    public void DirectMessageSourceMustBeInvokingUsersExactChannel()
+    public void IssueWithoutSourceKeepsProvidedDetailsWithoutEmptyContextLink()
     {
-        Assert.Multiple(() =>
-        {
-            Assert.That(GithubCommands.IsAuthorizedDirectMessage(10, 7, 10, 7), Is.True);
-            Assert.That(GithubCommands.IsAuthorizedDirectMessage(10, 8, 10, 7), Is.False);
-            Assert.That(GithubCommands.IsAuthorizedDirectMessage(11, 7, 10, 7), Is.False);
-        });
+        Assert.That(GithubCommands.AppendIssueContext("Provided details", "SkyModCommands", "",
+            Array.Empty<string>(), Array.Empty<string>()), Is.EqualTo("Provided details"));
     }
 
     [Test]
@@ -217,8 +213,7 @@ public class GitRepoAutocompleteHandlerTests
         {
             // No message at all - the "paste report content" path (unreadable source): never bindable.
             Assert.That(GithubCommands.CanBindEvidence("Coflnet/SkyModCommands", 0, 0), Is.False);
-            // guildId 0 with a real message only occurs when the source was verified as the invoking
-            // user's own bot DM (Issue() only reaches canread=true with reportGuildId 0 in that case).
+            // The legacy pasted-content flow can bind evidence to a bot-created DM mirror.
             Assert.That(GithubCommands.CanBindEvidence("Coflnet/SkyModCommands", 0, 123), Is.True);
             Assert.That(GithubCommands.CanBindEvidence("Coflnet/SkyModCommands", coflnet, 123), Is.True);
             Assert.That(GithubCommands.CanBindEvidence("Coflnet/SkyModCommands", 999, 123), Is.False);

@@ -64,28 +64,31 @@ public class GithubCommands : InteractionModuleBase
         ulong reportMessageId = 0;
         var resolvedInput = ResolveMessageInput(body, message, Context.Interaction.GuildId, Context.Interaction.ChannelId);
         body = resolvedInput.Body;
+        if (Context.Interaction.GuildId == null || resolvedInput.DirectMessageChannelId != null)
+        {
+            // DM context is optional: never fetch private messages or wait for a draft submission.
+            var notes = new List<string> { "If you have more context, please add it as a comment on the GitHub issue (optional)." };
+            if (image != null)
+            {
+                if (IsPublicIssueImage(image))
+                {
+                    body += $"\n\n![Attached screenshot]({image.Url})";
+                    notes.Add("The screenshot link was included; Discord attachment links may expire.");
+                }
+                else
+                    notes.Add("The attached image was not included because its type, size, or URL is unsupported.");
+            }
+            await CreateIssue(title, repo, body, resolvedInput.MessageId != null ? message : "",
+                Enumerable.Empty<(long Size, string? ContentType, string Url)>(), Enumerable.Empty<string>(),
+                0, 0, 0, Context.User.Id, false, extraNotes: notes);
+            return;
+        }
         IMessage? reportMessage = null;
         try
         {
             if (callingChannel == null)
                 throw new Exception("Calling channel is null");
             IMessageChannel reportChannel = callingChannel;
-            var directMessageSource = resolvedInput.DirectMessageChannelId != null;
-            if (directMessageSource)
-            {
-                var linkedChannel = await Context.Client.GetChannelAsync(resolvedInput.DirectMessageChannelId!.Value);
-                if (linkedChannel is not IDMChannel directMessage
-                    || !IsAuthorizedDirectMessage(directMessage.Id, directMessage.Recipient.Id,
-                        resolvedInput.DirectMessageChannelId.Value, Context.User.Id))
-                    throw new Exception("Linked direct message channel is not the invoking user's bot DM");
-                reportChannel = directMessage;
-            }
-            else if (Context.Interaction.GuildId == null)
-            {
-                if (callingChannel is not IDMChannel directMessage || directMessage.Recipient.Id != Context.User.Id)
-                    throw new Exception("Private issue sources must be the invoking user's one-to-one bot DM");
-                directMessageSource = true;
-            }
             if (resolvedInput.MessageId != null)
             {
                 reportMessage = await reportChannel.GetMessageAsync(resolvedInput.MessageId.Value);
@@ -99,20 +102,16 @@ public class GithubCommands : InteractionModuleBase
                 var selectedReportId = SelectReportMessageId(candidates.Select(candidate => (candidate.Id, candidate.Author.IsBot, candidate.Author.IsWebhook)));
                 reportMessage = selectedReportId == null ? null : candidates.First(candidate => candidate.Id == selectedReportId);
             }
-            if (reportMessage == null || reportMessage.Author.IsBot || reportMessage.Author.IsWebhook
-                || directMessageSource && reportMessage.Author.Id != Context.User.Id)
+            if (reportMessage == null || reportMessage.Author.IsBot || reportMessage.Author.IsWebhook)
                 throw new Exception("No ordinary user report message was found in the bounded channel history");
-            reportGuildId = directMessageSource ? 0 : Context.Interaction.GuildId ?? 0;
+            reportGuildId = Context.Interaction.GuildId.Value;
             reportChannelId = reportChannel.Id;
             reportMessageId = reportMessage.Id;
             canread = true;
         }
         catch (Exception e) when (resolvedInput.MessageId != null)
         {
-            // The bot has no access to the channel/DM holding the linked message (e.g. a DM between
-            // the operator and a third party) - a permanent Discord limitation, not something a retry
-            // or a different fetch path can work around. The operator did supply an exact link though,
-            // so let them paste the content instead of losing the issue.
+            // Preserve unreadable guild reports so the operator can paste their content.
             logger.LogInformation("Issue source message could not be read: {Category}", e.GetType().Name);
             // Carry the image: attachment (if any) forward - it's the best evidence input available
             // here (no copy-link step, no expiry) and must not be silently dropped.
@@ -125,8 +124,8 @@ public class GithubCommands : InteractionModuleBase
                     .WithButton("Add report content", $"issue-content:{token}", ButtonStyle.Primary)
                     .Build();
                 var prompt = attachedImageUrl.Length != 0
-                    ? "I could not read that message (the bot is not in this DM). Your attached image will be included as evidence - add the report text and any further image links."
-                    : "I could not read that message (the bot is not in this DM). Paste the report text and any image links and I'll put them in the issue.";
+                    ? "I could not read that report message. Your attached image will be included as evidence - add the report text and any further image links."
+                    : "I could not read that report message. Paste the report text and any image links and I'll put them in the issue.";
                 await FollowupAsync(prompt, components: components, ephemeral: true);
             }
             catch (IssueDraftDenied denied)
@@ -155,9 +154,7 @@ public class GithubCommands : InteractionModuleBase
             }
             return;
         }
-        // The source message was read directly (Coflnet-server or the operator's own bot DM), so the
-        // binding stays on that message as before. image: is scoped to the unreadable/paste-flow
-        // mirror path only - do not silently drop it here, tell the operator it was not used.
+        // Bind evidence to the guild report and explain that the separate image option was not used.
         var readableSourceNotes = image != null
             ? new[] { "The linked report message remains the evidence source; the attached image was not included." }
             : null;
@@ -360,9 +357,6 @@ public class GithubCommands : InteractionModuleBase
         return (string.IsNullOrWhiteSpace(body) ? message : body + "\n\n" + message, null, null);
     }
 
-    internal static bool IsAuthorizedDirectMessage(ulong actualChannelId, ulong recipientId, ulong linkedChannelId, ulong invokingUserId) =>
-        actualChannelId == linkedChannelId && recipientId == invokingUserId;
-
     internal static ulong? SelectReportMessageId(IEnumerable<(ulong Id, bool IsBot, bool IsWebhook)> candidates)
     {
         foreach (var candidate in candidates)
@@ -403,7 +397,8 @@ public class GithubCommands : InteractionModuleBase
     internal static string AppendIssueContext(string body, string repository, string jumpUrl,
         IEnumerable<string> harvestedUrls, IEnumerable<string> attachedUrls)
     {
-        body += "\ncontext:" + jumpUrl;
+        if (!string.IsNullOrWhiteSpace(jumpUrl))
+            body += "\ncontext:" + jumpUrl;
         // Attached-first ordering matters: with 3+ harvested images the operator's own attachment must
         // still survive the Take(MaxPublicIssueImages) cap.
         var candidateUrls = attachedUrls.Concat(harvestedUrls);
