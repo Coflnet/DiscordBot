@@ -13,7 +13,7 @@ namespace Coflnet.Discord;
 
 [Group("creator", "Manage Expert creator applications")]
 [IntegrationType(ApplicationIntegrationType.GuildInstall)]
-[CommandContextType(InteractionContextType.Guild)]
+[CommandContextType(InteractionContextType.Guild, InteractionContextType.BotDm)]
 public sealed class CreatorReviewCommands(
     Persistence persistence,
     DiscordHandler discord,
@@ -23,12 +23,43 @@ public sealed class CreatorReviewCommands(
     ILogger<CreatorReviewCommands> logger) : InteractionModuleBase
 {
     internal const ulong ReviewerId = 267680402594988033;
-    private const string PrivacyNoticeVersion = "2026-09-04";
+    internal const string PrivacyNoticeVersion = "2026-09-04";
     private const string ReviewRuleVersion = "creator-review-2026-09-04";
     private const string DefaultReviewReason = "Manual application review completed";
     private static readonly Regex MessageLink = new(
         @"^https://discord\.com/channels/(?<guild>@me|[0-9]{17,20})/(?<channel>[0-9]{17,20})/(?<message>[0-9]{17,20})$",
         RegexOptions.CultureInvariant);
+
+    [SlashCommand("apply", "Apply to become an Expert Config creator in bot DMs")]
+    public async Task Apply(
+        [Summary("application", "Your Minecraft UUID, residence, age category and Config experience")]
+        [MaxLength(3500)] string application = "")
+    {
+        if (Context.Channel is not IDMChannel)
+        {
+            await RespondAsync("Run `/creator apply` in my DM to apply privately.", ephemeral: true);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(application))
+        {
+            await RespondAsync(
+                "Use `/creator apply application:<your application text>` here. Include your Minecraft UUID, "
+                + "residence country, whether you are an adult or age 16+ with a legal representative, and your Config experience. "
+                + "Do not include identity documents.\n"
+                + $"Privacy notice: https://coflnet.com/privacy (version {PrivacyNoticeVersion}). "
+                + "Your application will be sent to the reviewer only after you press Submit.");
+            return;
+        }
+        await RespondAsync(
+            $"Review your application before sending it to <@{ReviewerId}>.\n"
+            + $"Privacy notice: https://coflnet.com/privacy (version {PrivacyNoticeVersion}).\n"
+            + "Do not include identity documents. Press Submit to send this application for review.",
+            embed: new EmbedBuilder().WithTitle("Expert Config creator application")
+                .WithDescription(application).Build(),
+            components: new ComponentBuilder().WithButton("Submit application",
+                $"creator-submit:{Context.User.Id}", ButtonStyle.Primary).Build(),
+            allowedMentions: AllowedMentions.None);
+    }
 
     [SlashCommand("balance", "Check your creator earnings balance")]
     public async Task Balance()
@@ -64,15 +95,15 @@ public sealed class CreatorReviewCommands(
 
     [SlashCommand("review", "Write an immutable Expert application review")]
     public async Task Review(
-        [Summary("applicant", "Discord user who submitted the application")] IUser applicant,
-        [Summary("application", "Exact Discord application-message link")] string application,
+        [Summary("applicant", "Applicant Discord ID or mention")] string applicantText,
+        [Summary("application", "Application text to review (legacy Discord message links also accepted)")] string application,
         [Summary("residence", "Residence country, ISO alpha-2")] string residenceCountry,
         [Summary("capacity", "Adult, or age 16+ with a legal representative")] CreatorCapacityStatus capacityStatus,
         [Summary("decision", "Optional override of the capacity-based outcome")] CreatorOnboardingStatus? decision = null,
         [Summary("reason", "Optional concise review rationale")] string reason = DefaultReviewReason,
         [Summary("seller-type", "Individual or business")] CreatorSellerType sellerType = CreatorSellerType.Individual,
         [Summary("capacity-law", "Optional reviewed country/subdivision; defaults to residence")] string capacityJurisdiction = "",
-        [Summary("representative", "Required separate Discord account for a minor")] IUser? representative = null,
+        [Summary("representative", "Separate guardian Discord ID or mention for a minor")] string representativeText = "",
         [Summary("tax-residence", "Optional paid-sale ISO country; defaults to residence")] string taxResidenceCountry = "",
         [Summary("tax-document", "Paid only: EU/GB/CH individual=Statement; US=UsSettlement")] CreatorTaxDocumentRoute taxDocumentRoute = CreatorTaxDocumentRoute.NotApplicable,
         [Summary("verification", "Optional opaque payout-verification reference")] string verificationReference = "",
@@ -84,10 +115,20 @@ public sealed class CreatorReviewCommands(
         await DeferAsync(ephemeral: true);
         try
         {
+            var applicant = await ResolveUser(applicantText, "applicant");
+            if (applicant == null)
+                return;
             var account = await Account(applicant, minecraftUuid);
             if (account == null)
                 return;
-            var evidence = await Evidence(application, applicant.Id);
+            if (string.IsNullOrWhiteSpace(application))
+            {
+                await FollowupAsync("Application text is required.", ephemeral: true);
+                return;
+            }
+            var evidence = TryMessageLink(application, out _, out _, out _)
+                ? await Evidence(application, applicant.Id)
+                : TextEvidence(application, applicant.Id, Context.Interaction.Id);
             if (evidence == null)
                 return;
             if (!TryOptionalUtcDate(validUntil, out var validUntilUtc))
@@ -105,6 +146,13 @@ public sealed class CreatorReviewCommands(
                     CreatorOnboardingStatus.Rejected,
                 _ => CreatorOnboardingStatus.Approved
             };
+            IUser? representative = null;
+            if (!string.IsNullOrWhiteSpace(representativeText))
+            {
+                representative = await ResolveUser(representativeText, "representative");
+                if (representative == null)
+                    return;
+            }
             if (capacityStatus == CreatorCapacityStatus.Minor16PlusWithGuardian
                 && (representative == null || representative.Id == applicant.Id))
             {
@@ -187,12 +235,13 @@ public sealed class CreatorReviewCommands(
                 $"Stored immutable review `{stored.Id}`: **{stored.Status}** for {applicant.Mention}.\n"
                 + CreatorPublishing.Summary(stored, DateTime.UtcNow),
                 ephemeral: true);
+            await NotifyApplicant(applicant, stored);
         }
         catch (Exception exception)
         {
             logger.LogError(exception,
                 "Creator application review failed for Discord applicant {applicantId} by reviewer {reviewerId}",
-                applicant.Id, Context.User.Id);
+                applicantText, Context.User.Id);
             await FollowupAsync(
                 exception is HttpRequestException { StatusCode: null }
                     ? "The review service is unavailable, so nothing was stored. Check its connection and try again."
@@ -205,7 +254,7 @@ public sealed class CreatorReviewCommands(
 
     [SlashCommand("request-guardian", "Send the current Creator agreement to the reviewed guardian")]
     public async Task RequestGuardian(
-        [Summary("applicant", "Minor creator with a pending review")] IUser applicant,
+        [Summary("applicant", "Minor creator Discord ID or mention")] string applicantText,
         [Summary("language", "Agreement language: en or de")] string language = "en",
         [Summary("minecraft-uuid", "Optional reviewed UUID; required without a linked account")] string minecraftUuid = "")
     {
@@ -214,6 +263,9 @@ public sealed class CreatorReviewCommands(
         await DeferAsync(ephemeral: true);
         try
         {
+            var applicant = await ResolveUser(applicantText, "applicant");
+            if (applicant == null)
+                return;
             var account = await Account(applicant, minecraftUuid);
             if (account == null)
                 return;
@@ -275,7 +327,7 @@ public sealed class CreatorReviewCommands(
         {
             logger.LogError(exception,
                 "Sending guardian acceptance failed for Discord applicant {applicantId}",
-                applicant.Id);
+                applicantText);
             await FollowupAsync(
                 "The guardian request was not sent. Check the account, DMs and service logs.",
                 ephemeral: true);
@@ -284,7 +336,7 @@ public sealed class CreatorReviewCommands(
 
     [SlashCommand("set-status", "Append a status change using the latest reviewed identity data")]
     public async Task SetStatus(
-        [Summary("applicant", "Reviewed Discord applicant")] IUser applicant,
+        [Summary("applicant", "Applicant Discord ID or mention")] string applicantText,
         [Summary("decision", "New review status")] CreatorOnboardingStatus decision,
         [Summary("reason", "Reason for the status change")] string reason,
         [Summary("valid-until", "Optional replacement exclusive UTC expiry: yyyy-MM-dd")] string validUntil = "",
@@ -295,6 +347,9 @@ public sealed class CreatorReviewCommands(
         await DeferAsync(ephemeral: true);
         try
         {
+            var applicant = await ResolveUser(applicantText, "applicant");
+            if (applicant == null)
+                return;
             var account = await Account(applicant, minecraftUuid);
             if (account == null)
                 return;
@@ -319,19 +374,20 @@ public sealed class CreatorReviewCommands(
                 $"Stored immutable status review `{stored.Id}`: **{stored.Status}** for {applicant.Mention}.\n"
                 + CreatorPublishing.Summary(stored, DateTime.UtcNow),
                 ephemeral: true);
+            await NotifyApplicant(applicant, stored);
         }
         catch (Exception exception)
         {
             logger.LogError(exception,
                 "Creator status change failed for Discord applicant {applicantId} by reviewer {reviewerId}",
-                applicant.Id, Context.User.Id);
+                applicantText, Context.User.Id);
             await FollowupAsync("The status change was not stored. Check service logs.", ephemeral: true);
         }
     }
 
     [SlashCommand("show", "Show the latest immutable Expert application review")]
     public async Task Show(
-        [Summary("applicant", "Reviewed Discord applicant")] IUser applicant,
+        [Summary("applicant", "Applicant Discord ID or mention")] string applicantText,
         [Summary("minecraft-uuid", "Optional reviewed UUID; required without a linked account")] string minecraftUuid = "")
     {
         if (!await RequireReviewer())
@@ -339,6 +395,9 @@ public sealed class CreatorReviewCommands(
         await DeferAsync(ephemeral: true);
         try
         {
+            var applicant = await ResolveUser(applicantText, "applicant");
+            if (applicant == null)
+                return;
             var account = await Account(applicant, minecraftUuid);
             if (account == null)
                 return;
@@ -379,9 +438,46 @@ public sealed class CreatorReviewCommands(
         {
             logger.LogError(exception,
                 "Creator review lookup failed for Discord applicant {applicantId} by reviewer {reviewerId}",
-                applicant.Id, Context.User.Id);
+                applicantText, Context.User.Id);
             await FollowupAsync("The review could not be loaded. Check service logs.", ephemeral: true);
         }
+    }
+
+    private async Task NotifyApplicant(IUser applicant, CreatorReview review)
+    {
+        try
+        {
+            await applicant.SendMessageAsync(
+                $"Your Expert Config creator application is **{review.Status}**.\n"
+                + CreatorPublishing.Summary(review, DateTime.UtcNow),
+                allowedMentions: AllowedMentions.None);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Creator review {reviewId} stored, but applicant {userId} could not be notified",
+                review.Id, applicant.Id);
+            await FollowupAsync("The review was stored, but I could not DM the applicant. Ask them to enable DMs.", ephemeral: true);
+        }
+    }
+
+    internal static bool TryUserId(string value, out ulong id)
+    {
+        var text = value.Trim();
+        if (text.StartsWith("<@", StringComparison.Ordinal) && text.EndsWith('>'))
+            text = text.StartsWith("<@!", StringComparison.Ordinal) ? text[3..^1] : text[2..^1];
+        return ulong.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out id) && id != 0;
+    }
+
+    private async Task<IUser?> ResolveUser(string value, string field)
+    {
+        if (TryUserId(value, out var id))
+        {
+            var user = await Context.Client.GetUserAsync(id);
+            if (user != null && !user.IsBot)
+                return user;
+        }
+        await FollowupAsync($"{field} must be an available Discord user's ID or mention.", ephemeral: true);
+        return null;
     }
 
     private async Task<bool> RequireReviewer()
@@ -484,6 +580,11 @@ public sealed class CreatorReviewCommands(
             : CreatorIdentitySource.ReviewedUuid;
     }
 
+    internal static (string Reference, string Sha256) TextEvidence(
+        string application, ulong applicantId, ulong interactionId) =>
+        ($"discord-interaction:{interactionId}:applicant:{applicantId}",
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(application))).ToLowerInvariant());
+
     private async Task<(string Reference, string Sha256)?> Evidence(
         string link,
         ulong applicantId)
@@ -497,7 +598,8 @@ public sealed class CreatorReviewCommands(
             return null;
         }
         var message = await discord.GetMessageFromChannel(channelId, messageId);
-        if (message == null || message.Author.Id != applicantId)
+        if (message == null || message.Author.Id != applicantId
+            || (guildId == 0 && (message.Channel is not IDMChannel dm || dm.Recipient.Id != applicantId)))
         {
             await FollowupAsync(
                 "The bot cannot access that application message or it was not authored by the applicant.",

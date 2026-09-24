@@ -1,7 +1,9 @@
 using System.Net;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using Coflnet.Sky.McConnect.Api;
 using System.Text.Json;
+using Discord;
 using Discord.Interactions;
 using Discord.Rest;
 using Microsoft.Extensions.Configuration;
@@ -12,6 +14,59 @@ namespace Coflnet.Discord;
 
 public class CreatorReviewCommandsTests
 {
+    [Test]
+    public void CreatorCommandsAreRegisteredForGuildsAndBotDms()
+    {
+        var attributes = typeof(CreatorReviewCommands).GetCustomAttributesData();
+        var contexts = attributes.Single(item => item.AttributeType == typeof(CommandContextTypeAttribute));
+        var contextValues = contexts.ConstructorArguments
+            .SelectMany(item => item.Value is IReadOnlyCollection<CustomAttributeTypedArgument> values
+                ? values
+                : [item])
+            .Select(item => (InteractionContextType)Convert.ToInt32(item.Value))
+            .ToArray();
+        var integration = attributes.Single(item => item.AttributeType == typeof(IntegrationTypeAttribute));
+        var integrationValues = integration.ConstructorArguments
+            .SelectMany(item => item.Value is IReadOnlyCollection<CustomAttributeTypedArgument> values
+                ? values
+                : [item])
+            .Select(item => (ApplicationIntegrationType)Convert.ToInt32(item.Value))
+            .ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(contextValues, Is.EquivalentTo(new[]
+                { InteractionContextType.Guild, InteractionContextType.BotDm }));
+            Assert.That(integrationValues, Is.EquivalentTo(new[]
+                { ApplicationIntegrationType.GuildInstall }));
+        });
+    }
+
+    [Test]
+    public void CreatorReviewAccessIsLimitedToTheNamedReviewer()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(CreatorReviewCommands.IsAuthorizedReviewer(267680402594988033), Is.True);
+            Assert.That(CreatorReviewCommands.IsAuthorizedReviewer(267680402594988032), Is.False);
+            Assert.That(CreatorReviewCommands.IsAuthorizedReviewer(0), Is.False);
+        });
+    }
+
+    [TestCase("267680402594988033", true)]
+    [TestCase("<@267680402594988033>", true)]
+    [TestCase("<@!267680402594988033>", true)]
+    [TestCase("0", false)]
+    [TestCase("<@0>", false)]
+    [TestCase("not-a-user", false)]
+    [TestCase("<@&267680402594988033>", false)]
+    public void ReviewerCanIdentifyAnApplicantByIdOrMention(string value, bool expected)
+    {
+        Assert.That(CreatorReviewCommands.TryUserId(value, out var userId), Is.EqualTo(expected));
+        if (expected)
+            Assert.That(userId, Is.EqualTo(267680402594988033));
+    }
+
     [Test]
     public async Task DiscordAcceptsTheCreatorCommandSchema()
     {
@@ -31,10 +86,17 @@ public class CreatorReviewCommandsTests
             .BuildServiceProvider();
         var module = await interactions.AddModuleAsync<CreatorReviewCommands>(
             services);
+        var submissionModule = await interactions.AddModuleAsync<CreatorApplicationSubmissionCommands>(
+            services);
 
+        Assert.That(submissionModule, Is.Not.Null,
+            "The application submission button must be registered as an interaction module.");
+        Assert.That(module.SlashCommands.Single(item => item.Name == "apply")
+            .Parameters.Single(item => item.Name == "application").IsRequired,
+            Is.False, "Applicants may open the private instructions without entering application text.");
         Assert.That(module.SlashCommands.Select(item => item.Name),
             Is.EquivalentTo(new[]
-                { "balance", "review", "request-guardian", "set-status", "show" }));
+                { "apply", "balance", "review", "request-guardian", "set-status", "show" }));
         Assert.That(module.SlashCommands.Single(item => item.Name == "balance").Parameters,
             Is.Empty, "Creators must only query their own linked account.");
         var review = module.SlashCommands.Single(item => item.Name == "review");
@@ -126,6 +188,29 @@ public class CreatorReviewCommandsTests
             Assert.That(date.Kind, Is.EqualTo(DateTimeKind.Utc));
             Assert.That(CreatorReviewCommands.TryUtcDate(
                 "31.08.2026", out _), Is.False);
+        });
+    }
+
+    [Test]
+    public void DirectApplicationEvidenceBindsTheApplicantAndSubmissionAndHashesTheText()
+    {
+        const string application = "Minecraft UUID: e7246661de77474f94627fabf9880f60";
+        var evidence = CreatorReviewCommands.TextEvidence(application, 123, 456);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(evidence.Reference,
+                Is.EqualTo("discord-interaction:456:applicant:123"));
+            Assert.That(evidence.Sha256, Has.Length.EqualTo(64));
+            Assert.That(evidence.Sha256, Does.Match("^[0-9a-f]{64}$"));
+            Assert.That(CreatorReviewCommands.TextEvidence(application, 123, 456),
+                Is.EqualTo(evidence));
+            Assert.That(CreatorReviewCommands.TextEvidence(application + ".", 123, 456).Sha256,
+                Is.Not.EqualTo(evidence.Sha256));
+            Assert.That(CreatorReviewCommands.TextEvidence(application, 124, 456).Reference,
+                Is.Not.EqualTo(evidence.Reference));
+            Assert.That(CreatorReviewCommands.TextEvidence(application, 123, 457).Reference,
+                Is.Not.EqualTo(evidence.Reference));
         });
     }
 

@@ -1,5 +1,13 @@
 Coflnet Discord Bot
 
+In the bot DM, run `/creator apply application:<your application text>`.
+The bot shows a private preview with the privacy notice; press **Submit application**
+to send it to reviewer `267680402594988033`. No message link is needed.
+The reviewer receives the text in their bot DM and confirms the outcome with
+`/creator review applicant:<Discord ID> application:<application text> residence:<country> capacity:<status>`.
+`/creator request-guardian`, `/creator set-status`, and `/creator show` also work
+in bot DMs. Applicants receive review and status outcomes by DM.
+
 `/creator balance` privately shows the caller's linked account balance in EUR:
 pending, outstanding, reserved for payout, available, and payout threshold.
 Creators can link their account with `/update-mc-user`. The balance includes
@@ -10,8 +18,10 @@ The `/creator review`, `/creator request-guardian`, `/creator set-status`, and
 `/creator show` commands are restricted at runtime solely to Discord account
 `267680402594988033`.
 They manage immutable Expert seller reviews through SkyReferral. Applicants
-must have linked their Discord and Minecraft accounts. The review command hashes
-the referenced Discord application message and attachment metadata; message
+can link their Discord and Minecraft accounts, or the reviewer can supply the
+verified `minecraft-uuid`. The review command hashes
+the application text and references the review interaction (legacy message links
+are also accepted and hash the message and attachment metadata); message
 contents and identity documents are not copied into the application database.
 This reviewed-seller record is separate from SkyModCommands' legacy publisher
 list: the legacy list permits only free Configs, while paid publication requires
