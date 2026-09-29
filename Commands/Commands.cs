@@ -201,10 +201,12 @@ public class Commands : InteractionModuleBase
                 return;
             }
             logger.LogInformation("User {userId} ({id}) requested transactions of {user}", Context.User.GlobalName, Context.User.Id, userId);
-            var transactions = await transactionApi.TransactionUUserIdGetAsync(userId, 0, 10);
+            var transactionsTask = transactionApi.TransactionUUserIdGetAsync(userId, 0, 10);
+            var userInfo = await userApi.UserUserIdGetAsync(userId);
+            var transactions = await transactionsTask;
             await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
                 .WithTitle("Transactions for " + userId)
-                .WithDescription(string.Join("\n", transactions.Select(t => $"{t.Id} {t.TimeStamp} {t.Amount} {t.ProductId} - {t.Reference}")))
+                .WithDescription(TransactionsDescription(userInfo, transactions))
                 .WithColor(Color.Green)
                 .Build());
         }
@@ -213,6 +215,16 @@ public class Commands : InteractionModuleBase
             logger.LogError(ex, "Error executing transactions command for {user}", user);
             try { await FollowupAsync("An error occurred while fetching transactions", ephemeral: true); } catch { }
         }
+    }
+
+    internal static string TransactionsDescription(
+        Coflnet.Payments.Client.Model.User userInfo,
+        IEnumerable<Coflnet.Payments.Client.Model.ExternalTransaction> transactions)
+    {
+        var balance = FormattableString.Invariant($"Balance: **{userInfo.Balance:N0}** CoflCoins");
+        if (userInfo.AvailableBalance != userInfo.Balance)
+            balance += FormattableString.Invariant($" (available: **{userInfo.AvailableBalance:N0}**)");
+        return balance + "\n\n" + string.Join("\n", transactions.Select(t => $"{t.Id} {t.TimeStamp} {t.Amount} {t.ProductId} - {t.Reference}"));
     }
 
     [SlashCommand("compensate", "Compensate a user", true)]
