@@ -62,7 +62,8 @@ public class GithubCommands : InteractionModuleBase
         ulong reportGuildId = 0;
         ulong reportChannelId = 0;
         ulong reportMessageId = 0;
-        var resolvedInput = ResolveMessageInput(body, message, Context.Interaction.GuildId, Context.Interaction.ChannelId);
+        var threadParentId = ThreadParentId(callingChannel);
+        var resolvedInput = ResolveMessageInput(body, message, Context.Interaction.GuildId, Context.Interaction.ChannelId, threadParentId);
         body = resolvedInput.Body;
         if (Context.Interaction.GuildId == null || resolvedInput.DirectMessageChannelId != null)
         {
@@ -91,6 +92,12 @@ public class GithubCommands : InteractionModuleBase
             IMessageChannel reportChannel = callingChannel;
             if (resolvedInput.MessageId != null)
             {
+                if (callingChannel is IThreadChannel linkedThread
+                    && IsThreadStarterLink(message, Context.Interaction.GuildId, linkedThread.Id, threadParentId))
+                {
+                    // Only the thread's own starter may be read from the parent channel.
+                    reportChannel = (await GetThreadParentChannel(linkedThread)) ?? reportChannel;
+                }
                 reportMessage = await reportChannel.GetMessageAsync(resolvedInput.MessageId.Value);
             }
             else
@@ -98,9 +105,25 @@ public class GithubCommands : InteractionModuleBase
                 // DeferAsync creates the newest channel entry. Use the interaction
                 // snowflake as the exclusive cursor, then take the nearest ordinary
                 // guild message even when the operator did not author the report.
-                var candidates = (await callingChannel.GetMessagesAsync(Context.Interaction.Id, Direction.Before, MaxIssueSourceMessages).FlattenAsync()).ToList();
+                var candidates = (await callingChannel.GetMessagesAsync(Context.Interaction.Id, Direction.Before, MaxIssueSourceMessages).FlattenAsync())
+                    .Where(candidate => candidate.Type != MessageType.ThreadStarterMessage).ToList();
                 var selectedReportId = SelectReportMessageId(candidates.Select(candidate => (candidate.Id, candidate.Author.IsBot, candidate.Author.IsWebhook)));
                 reportMessage = selectedReportId == null ? null : candidates.First(candidate => candidate.Id == selectedReportId);
+                if (reportMessage == null && callingChannel is IThreadChannel thread)
+                {
+                    // The message a thread was started from is not part of the thread history.
+                    // Forum posts keep it inside the thread, text-channel threads in the parent channel.
+                    var starter = await thread.GetMessageAsync(thread.Id);
+                    if (starter != null)
+                        reportChannel = thread;
+                    else if (await GetThreadParentChannel(thread) is { } parentChannel)
+                    {
+                        starter = await parentChannel.GetMessageAsync(thread.Id);
+                        reportChannel = parentChannel;
+                    }
+                    if (starter != null && IsOrdinaryThreadStarter(thread.Id, starter.Id, starter.Author.IsBot, starter.Author.IsWebhook))
+                        reportMessage = starter;
+                }
             }
             if (reportMessage == null || reportMessage.Author.IsBot || reportMessage.Author.IsWebhook)
                 throw new Exception("No ordinary user report message was found in the bounded channel history");
@@ -330,11 +353,28 @@ public class GithubCommands : InteractionModuleBase
             .Take(MaxPublicIssueImages)
             .ToList();
 
-    internal static ulong? ExactMessageId(string url, ulong? guildId, ulong? channelId)
+    static ulong? ThreadParentId(IMessageChannel? channel) =>
+        channel is IThreadChannel thread ? (thread as SocketThreadChannel)?.ParentChannel?.Id ?? thread.CategoryId : null;
+
+    async Task<IMessageChannel?> GetThreadParentChannel(IThreadChannel thread) =>
+        (thread as SocketThreadChannel)?.ParentChannel as IMessageChannel
+        ?? (thread.CategoryId is { } parentId && Context.Guild != null ? await Context.Guild.GetTextChannelAsync(parentId) : null);
+
+    internal static bool IsThreadStarterLink(string url, ulong? guildId, ulong threadId, ulong? threadParentChannelId) =>
+        threadParentChannelId != null && ExactMessageId(url, guildId, threadParentChannelId) == threadId;
+
+    internal static bool IsOrdinaryThreadStarter(ulong threadId, ulong starterId, bool isBot, bool isWebhook) =>
+        starterId == threadId && !isBot && !isWebhook;
+
+    internal static ulong? ExactMessageId(string url, ulong? guildId, ulong? channelId, ulong? threadParentChannelId = null)
     {
         var match = DiscordMessageLink.Match(url);
         if (!match.Success || channelId == null || !ulong.TryParse(match.Groups["channel"].Value, out var linkedChannel)
-            || linkedChannel != channelId || !ulong.TryParse(match.Groups["message"].Value, out var messageId))
+            || !ulong.TryParse(match.Groups["message"].Value, out var messageId))
+            return null;
+        // The starter of the current thread lives in the parent channel and shares the thread's id.
+        var isThreadStarter = threadParentChannelId != null && linkedChannel == threadParentChannelId && messageId == channelId;
+        if (linkedChannel != channelId && !isThreadStarter)
             return null;
         var linkedGuild = match.Groups["guild"].Value;
         if (guildId == null ? linkedGuild != "@me" : linkedGuild != guildId.Value.ToString())
@@ -342,7 +382,7 @@ public class GithubCommands : InteractionModuleBase
         return messageId;
     }
 
-    internal static (string Body, ulong? MessageId, ulong? DirectMessageChannelId) ResolveMessageInput(string body, string message, ulong? guildId, ulong? channelId)
+    internal static (string Body, ulong? MessageId, ulong? DirectMessageChannelId) ResolveMessageInput(string body, string message, ulong? guildId, ulong? channelId, ulong? threadParentChannelId = null)
     {
         if (string.IsNullOrWhiteSpace(message))
             return (body, null, null);
@@ -351,7 +391,7 @@ public class GithubCommands : InteractionModuleBase
             && ulong.TryParse(match.Groups["channel"].Value, out var directMessageChannelId)
             && ulong.TryParse(match.Groups["message"].Value, out var directMessageId))
             return (body, directMessageId, directMessageChannelId);
-        var messageId = ExactMessageId(message, guildId, channelId);
+        var messageId = ExactMessageId(message, guildId, channelId, threadParentChannelId);
         if (messageId != null)
             return (body, messageId, null);
         return (string.IsNullOrWhiteSpace(body) ? message : body + "\n\n" + message, null, null);
@@ -434,7 +474,7 @@ public class GithubCommands : InteractionModuleBase
         {
             var guildId = Context.Interaction.GuildId ?? 0;
             var channelId = Context.Interaction.ChannelId ?? 0;
-            if (ResolveMessageInput("", modal.MessageLink, Context.Interaction.GuildId, Context.Interaction.ChannelId).MessageId == null)
+            if (ResolveMessageInput("", modal.MessageLink, Context.Interaction.GuildId, Context.Interaction.ChannelId, ThreadParentId(Context.Channel)).MessageId == null)
             {
                 await RespondAsync("Paste one exact message link from this guild channel or your one-to-one bot DM.", ephemeral: true);
                 return;

@@ -140,6 +140,39 @@ public class GitRepoAutocompleteHandlerTests
     }
 
     [Test]
+    public void ExactReportLinkAcceptsOnlyCurrentThreadStarterFromParent()
+    {
+        const ulong guild = 267680588666896385, parent = 1540465169019179128, thread = 1540479250002354246, otherThread = 1540479250002354247;
+        string Link(ulong channel, ulong message) => $"https://discord.com/channels/{guild}/{channel}/{message}";
+        Assert.Multiple(() =>
+        {
+            Assert.That(GithubCommands.ExactMessageId(Link(parent, thread), guild, thread, parent), Is.EqualTo(thread));
+            Assert.That(GithubCommands.ExactMessageId(Link(parent, 1540479250002354999), guild, thread, parent), Is.Null);
+            Assert.That(GithubCommands.ExactMessageId(Link(parent, otherThread), guild, thread, parent), Is.Null);
+            Assert.That(GithubCommands.ExactMessageId(Link(parent, thread), guild, thread, null), Is.Null);
+            Assert.That(GithubCommands.ExactMessageId(Link(parent, thread), guild + 1, thread, parent), Is.Null);
+            Assert.That(GithubCommands.ExactMessageId(Link(thread, 1540479250002355000), guild, thread, parent), Is.EqualTo(1540479250002355000));
+            Assert.That(GithubCommands.ResolveMessageInput("", Link(parent, thread), guild, thread, parent).MessageId, Is.EqualTo(thread));
+            Assert.That(GithubCommands.ResolveMessageInput("", Link(parent, otherThread), guild, thread, parent).MessageId, Is.Null);
+            Assert.That(GithubCommands.IsThreadStarterLink(Link(parent, thread), guild, thread, parent), Is.True);
+            Assert.That(GithubCommands.IsThreadStarterLink(Link(thread, 1540479250002355000), guild, thread, parent), Is.False);
+            Assert.That(GithubCommands.IsThreadStarterLink(Link(parent, thread), guild, thread, null), Is.False);
+        });
+    }
+
+    [Test]
+    public void ThreadStarterFallbackRequiresOrdinaryUserMessageWithThreadId()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(GithubCommands.IsOrdinaryThreadStarter(5, 5, false, false), Is.True);
+            Assert.That(GithubCommands.IsOrdinaryThreadStarter(5, 5, true, false), Is.False);
+            Assert.That(GithubCommands.IsOrdinaryThreadStarter(5, 5, false, true), Is.False);
+            Assert.That(GithubCommands.IsOrdinaryThreadStarter(5, 6, false, false), Is.False);
+        });
+    }
+
+    [Test]
     public void DefaultGuildReportSelectionUsesNearestOrdinaryMessage()
     {
         var candidates = new[]
