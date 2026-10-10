@@ -7,16 +7,28 @@ namespace Coflnet.Discord;
 
 public sealed partial class CreatorReviewCommands
 {
-    [SlashCommand("payout-request", "Book a creator payout and generate the self-billing invoice")]
+    [SlashCommand("payout-request", "Request a payout of your creator earnings (the payout document is generated for you)")]
     public async Task PayoutRequest(
-        [Summary("user", "The creator's Discord user")] IUser user,
-        [Summary("invoice_number", "Our self-billing number, e.g. SB-2026-0001")] string invoiceNumber,
-        [Summary("amount", "EUR amount; defaults to the full available balance")] decimal? amount = null)
+        [Summary("user", "Reviewer only: the creator's Discord user; defaults to you")] IUser? user = null,
+        [Summary("invoice_number", "Reviewer only: document number, e.g. SB-2026-0001")] string invoiceNumber = "",
+        [Summary("amount", "EUR amount; defaults to your full available balance")] decimal? amount = null,
+        [Summary("name", "Creator legal name. Give name, address and bank_details together to skip the form")] string name = "",
+        [Summary("address", "Creator postal address; separate lines with ;")] string address = "",
+        [Summary("bank_details", "Creator bank details or PayPal; separate lines with ;")] string bankDetails = "",
+        [Summary("vat_id", "Creator VAT id (optional)")] string vatId = "",
+        [Summary("period", "Service period text (optional); default: first unpaid award through today")] string period = "")
     {
-        if (!await RequireReviewer())
-            return;
+        var target = user?.Id ?? Context.User.Id;
         invoiceNumber = invoiceNumber.Trim();
-        var error = CreatorPayoutDocumentService.ValidateInvoiceNumber(invoiceNumber);
+        if (!CreatorPayoutDocumentService.IsAuthorizedForPayoutRequest(
+                Context.User.Id, target, invoiceNumber.Length > 0))
+        {
+            await RespondAsync("You are not allowed to request a payout for someone else or to choose the invoice number.", ephemeral: true);
+            return;
+        }
+        string? error = invoiceNumber.Length == 0
+            ? null
+            : CreatorPayoutDocumentService.ValidateInvoiceNumber(invoiceNumber);
         long? cents = null;
         if (error == null && amount != null)
         {
@@ -24,14 +36,26 @@ public sealed partial class CreatorReviewCommands
             if (cents == null)
                 error = "amount must be a positive EUR value with at most two decimals.";
         }
+        var missing = new[] { ("name", name), ("address", address), ("bank_details", bankDetails) }
+            .Where(item => string.IsNullOrWhiteSpace(item.Item2)).Select(item => item.Item1).ToList();
+        if (error == null && missing.Count is > 0 and < 3)
+            error = $"Give name, address and bank_details together to skip the form, or none of them to fill in the form. Missing: {string.Join(", ", missing)}.";
         if (error != null)
         {
             await RespondAsync(error, ephemeral: true);
             return;
         }
-        // A modal must be the first response, so no Defer before it.
+        if (missing.Count == 0)
+        {
+            await ProcessPayoutRequest(target, invoiceNumber.Length == 0 ? null : invoiceNumber, cents,
+                name, address, bankDetails, vatId, period);
+            return;
+        }
+        // A modal must be the first response, so no Defer (and no slow eligibility lookup) before it;
+        // eligibility is checked on submit.
         await RespondWithModalAsync<PayoutModal>(
-            CreatorPayoutMessages.EncodeModalId(user.Id, invoiceNumber, cents));
+            CreatorPayoutMessages.EncodeModalId(
+                target, invoiceNumber.Length == 0 ? null : invoiceNumber, cents));
     }
 
     public sealed class PayoutModal : IModal
@@ -64,27 +88,53 @@ public sealed partial class CreatorReviewCommands
     [ModalInteraction("creator-payout:*:*:*", true)]
     public async Task PayoutRequestSubmitted(
         string userIdText,
-        string invoiceNumber,
+        string invoiceNumberText,
         string amountText,
         PayoutModal modal)
     {
-        // The slash command is gated too, but a modal custom id can be replayed.
-        if (!await RequireReviewer())
+        if (!CreatorPayoutMessages.TryDecodeModalId(
+                userIdText, invoiceNumberText, amountText,
+                out var userId, out var requestedCents, out var suppliedInvoice))
+        {
+            await RespondAsync("The payout form is invalid, run the command again.", ephemeral: true);
             return;
+        }
+        await ProcessPayoutRequest(userId, suppliedInvoice, requestedCents,
+            modal.CreatorName, modal.Address, modal.BankDetails, modal.VatId, modal.Period);
+    }
+
+    /// <summary>Shared by the slash-option path and the modal submit: authorise, defer, check, book, deliver.</summary>
+    private async Task ProcessPayoutRequest(
+        ulong userId,
+        string? suppliedInvoice,
+        long? requestedCents,
+        string creatorName,
+        string address,
+        string bankDetails,
+        string? vatId,
+        string? period)
+    {
+        // Never trust a custom id or option alone: a creator may only file for their own account.
+        if (!CreatorPayoutDocumentService.IsAuthorizedForPayoutRequest(
+                Context.User.Id, userId, suppliedInvoice != null))
+        {
+            await RespondAsync("You are not allowed to request this payout.", ephemeral: true);
+            return;
+        }
+        if (creatorName.Length > 100 || address.Length > 500 || bankDetails.Length > 500
+            || vatId?.Length > 40 || period?.Length > 60)
+        {
+            await RespondAsync("A value is too long: name 100, address 500, bank details 500, VAT id 40, period 60 characters.", ephemeral: true);
+            return;
+        }
+        var byReviewer = IsAuthorizedReviewer(Context.User.Id);
         await DeferAsync(ephemeral: true);
         try
         {
-            if (!CreatorPayoutMessages.TryDecodeModalId(
-                    userIdText, invoiceNumber, amountText,
-                    out var userId, out var requestedCents))
-            {
-                await FollowupAsync("The payout form is invalid, run the command again.", ephemeral: true);
-                return;
-            }
-            var addressLines = CreatorPayoutDocumentService.ParseAddress(modal.Address);
-            var bankLines = CreatorPayoutDocumentService.ParseAddress(modal.BankDetails);
+            var addressLines = CreatorPayoutDocumentService.ParseAddress(address);
+            var bankLines = CreatorPayoutDocumentService.ParseAddress(bankDetails);
             string? error = null;
-            if (string.IsNullOrWhiteSpace(modal.CreatorName) || addressLines.Count == 0 || bankLines.Count == 0)
+            if (string.IsNullOrWhiteSpace(creatorName) || addressLines.Count == 0 || bankLines.Count == 0)
                 error = "name, address and bank details are required.";
             var issuer = rewards.GetIssuer();
             if (error == null && issuer == null)
@@ -102,7 +152,7 @@ public sealed partial class CreatorReviewCommands
                 return;
             }
             var review = await onboarding.GetLatest(account.UserId);
-            error = CreatorPayoutDocumentService.ValidateOnboarding(review, DateTime.UtcNow);
+            error = CreatorPayoutDocumentService.ValidateOnboarding(review, DateTime.UtcNow, !byReviewer);
             if (error != null)
             {
                 await FollowupAsync(error, ephemeral: true);
@@ -111,36 +161,64 @@ public sealed partial class CreatorReviewCommands
             var balance = await rewards.GetBalance(account.UserId);
             var cents = requestedCents ?? balance.AvailableEurCents;
             error = CreatorPayoutDocumentService.ValidateAmount(
-                cents, balance.AvailableEurCents, balance.PayoutThresholdEurCents);
+                cents, balance.AvailableEurCents, balance.PayoutThresholdEurCents, !byReviewer);
             if (error != null)
             {
                 await FollowupAsync(error, ephemeral: true);
                 return;
             }
 
+            var route = PayoutRoute.Find(review!.TaxDocumentRoute)!;
+            error = CreatorPayoutDocumentService.ValidateCreatorVatId(route, vatId);
+            if (error != null)
+            {
+                await FollowupAsync(error, ephemeral: true);
+                return;
+            }
+            var invoiceNumber = suppliedInvoice
+                ?? CreatorPayoutDocumentService.GenerateInvoiceNumber(account.UserId, DateTime.UtcNow, route);
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
-            var period = modal.Period;
             if (string.IsNullOrWhiteSpace(period))
                 period = CreatorPayoutDocumentService.DefaultPeriod(
                     await rewards.GetLedger(account.UserId), today);
             var reference = CreatorPayoutDocumentService.LedgerReference(invoiceNumber);
             var pdf = CreatorPayoutDocumentService.RenderPdf(new PayoutInvoiceInput(
-                invoiceNumber, today, period.Trim(), modal.CreatorName.Trim(), addressLines,
-                review!.ResidenceCountry, string.IsNullOrWhiteSpace(modal.VatId) ? null : modal.VatId.Trim(),
-                bankLines, issuer!, cents, account.UserId, reference));
+                invoiceNumber, today, period.Trim(), creatorName.Trim(), addressLines,
+                review.ResidenceCountry, string.IsNullOrWhiteSpace(vatId) ? null : vatId.Trim(),
+                bankLines, issuer!, cents, account.UserId, reference, route));
             var sha = CreatorPayoutDocumentService.Sha256Hex(pdf);
             var booking = CreatorPayoutDocumentService.BuildBookingJson(
-                invoiceNumber, today, cents, account.UserId, review.ResidenceCountry, sha);
+                invoiceNumber, today, cents, account.UserId, review.ResidenceCountry, sha, route);
+
+            // Open the reviewer DM before booking so an unreachable reviewer fails with nothing booked.
+            IDMChannel? reviewerDm = null;
+            if (!byReviewer)
+            {
+                try
+                {
+                    var reviewer = await Context.Client.GetUserAsync(ReviewerId);
+                    reviewerDm = await reviewer.CreateDMChannelAsync();
+                }
+                catch (Exception e)
+                {
+                    logger.LogError("Reviewer DM unavailable for payout request {account}: {type}", account.UserId, e.GetType().Name);
+                }
+                if (reviewerDm == null)
+                {
+                    await FollowupAsync("Payouts are temporarily unavailable, please contact support. Nothing was booked.", ephemeral: true);
+                    return;
+                }
+            }
 
             RewardGrantResult result;
             try
             {
                 result = await rewards.RecordPayout(new RewardGrantRequest(
                     reference, account.UserId, 4, null, cents, null,
-                    $"Creator payout requested, self-billing invoice {invoiceNumber}",
+                    $"Creator payout requested, {route.DocumentKind} {invoiceNumber}",
                     CreatorPayoutDocumentService.BuildEvidenceJson(
                         cents, 0, 0, 0,
-                        CreatorPayoutDocumentService.EvidenceReference(invoiceNumber), sha)));
+                        CreatorPayoutDocumentService.EvidenceReference(invoiceNumber, route), sha)));
             }
             catch (HttpRequestException e)
             {
@@ -152,30 +230,62 @@ public sealed partial class CreatorReviewCommands
             {
                 // The ledger keeps the hash of the first PDF; a regenerated one would not match it.
                 await FollowupAsync(
-                    $"A payout request for invoice `{invoiceNumber}` already exists in the ledger. Nothing new was booked and no document is attached, "
-                    + "because a regenerated PDF would not match the stored evidence hash. Use a new invoice number (cancel the existing request first if it should not be paid).",
+                    byReviewer
+                        ? $"A payout request for invoice `{invoiceNumber}` already exists in the ledger. Nothing new was booked and no document is attached, "
+                            + "because a regenerated PDF would not match the stored evidence hash. Use a new invoice number (cancel the existing request first if it should not be paid)."
+                        : $"A payout request was already filed today (invoice `{invoiceNumber}`). Nothing new was booked. Please contact support if it needs changing.",
                     ephemeral: true);
                 return;
             }
 
-            using var pdfStream = new MemoryStream(pdf);
-            using var bookingStream = new MemoryStream(Encoding.UTF8.GetBytes(booking));
-            await FollowupWithFilesAsync(
-                [
-                    new FileAttachment(pdfStream, $"{invoiceNumber}.pdf"),
-                    new FileAttachment(bookingStream, $"{invoiceNumber}.booking.json")
-                ],
-                CreatorPayoutMessages.PayoutRequestReply(
-                    cents, modal.CreatorName.Trim(), bankLines, invoiceNumber,
-                    account.UserId, reference, sha,
-                    balance.AvailableEurCents - cents, !result.Created),
-                ephemeral: true,
-                allowedMentions: AllowedMentions.None);
+            var reply = CreatorPayoutMessages.PayoutRequestReply(
+                cents, creatorName.Trim(), bankLines, invoiceNumber,
+                account.UserId, reference, sha,
+                balance.AvailableEurCents - cents, false,
+                CreatorPayoutMessages.RequestedBy(Context.User.Id, userId), route);
+            if (byReviewer)
+            {
+                using var pdfStream = new MemoryStream(pdf);
+                using var bookingStream = new MemoryStream(Encoding.UTF8.GetBytes(booking));
+                await FollowupWithFilesAsync(
+                    [
+                        new FileAttachment(pdfStream, $"{invoiceNumber}.pdf"),
+                        new FileAttachment(bookingStream, $"{invoiceNumber}.booking.json")
+                    ],
+                    reply, ephemeral: true, allowedMentions: AllowedMentions.None);
+                return;
+            }
+
+            var notified = true;
+            using (var dmPdf = new MemoryStream(pdf))
+            using (var dmBooking = new MemoryStream(Encoding.UTF8.GetBytes(booking)))
+            {
+                try
+                {
+                    await reviewerDm!.SendFilesAsync(
+                        [
+                            new FileAttachment(dmPdf, $"{invoiceNumber}.pdf"),
+                            new FileAttachment(dmBooking, $"{invoiceNumber}.booking.json")
+                        ],
+                        reply, allowedMentions: AllowedMentions.None);
+                }
+                catch (Exception e)
+                {
+                    notified = false;
+                    logger.LogError("Reviewer DM failed after booking invoice {invoice}, account {account}: {type}",
+                        invoiceNumber, account.UserId, e.GetType().Name);
+                }
+            }
+            using var creatorPdf = new MemoryStream(pdf);
+            await FollowupWithFileAsync(
+                new FileAttachment(creatorPdf, $"{invoiceNumber}.pdf"),
+                CreatorPayoutMessages.CreatorConfirmation(cents, invoiceNumber, notified, route),
+                ephemeral: true, allowedMentions: AllowedMentions.None);
         }
         catch (Exception e)
         {
             // Never log the exception message or form content: it may echo creator identity.
-            logger.LogError("Creator payout request failed for Discord user {userIdText}: {type}", userIdText, e.GetType().Name);
+            logger.LogError("Creator payout request failed for Discord user {userId}: {type}", userId, e.GetType().Name);
             await FollowupAsync($"The payout request failed: {e.Message}", ephemeral: true);
         }
     }
@@ -246,7 +356,7 @@ public sealed partial class CreatorReviewCommands
                 await rewards.RecordPayout(new RewardGrantRequest(
                     CreatorPayoutDocumentService.PayoutReference(invoiceNumber),
                     account.UserId, 5, null, -request.RemunerationEurCents, null,
-                    $"Creator payout paid, self-billing invoice {invoiceNumber}",
+                    $"Creator payout paid, document {invoiceNumber}",
                     CreatorPayoutDocumentService.BuildPayoutDetailsJson(paymentReference),
                     request.Id));
             }

@@ -11,22 +11,28 @@ public static class CreatorPayoutMessages
         string.Create(CultureInfo.InvariantCulture, $"{cents / 100m:F2}");
 
     /// <summary>Custom id carrying user, invoice number and optional amount; well below the 100 char limit.</summary>
-    public static string EncodeModalId(ulong userId, string invoiceNumber, long? cents) =>
+    public const string GenerateMarker = "-";
+
+    /// <summary>A null invoice number is encoded as the marker: the handler derives it from the resolved account.</summary>
+    public static string EncodeModalId(ulong userId, string? invoiceNumber, long? cents) =>
         string.Create(CultureInfo.InvariantCulture,
-            $"{ModalPrefix}:{userId}:{invoiceNumber}:{(cents == null ? "-" : cents.Value.ToString(CultureInfo.InvariantCulture))}");
+            $"{ModalPrefix}:{userId}:{invoiceNumber ?? GenerateMarker}:{(cents == null ? "-" : cents.Value.ToString(CultureInfo.InvariantCulture))}");
 
     public static bool TryDecodeModalId(
         string userIdText,
         string invoiceNumber,
         string amountText,
         out ulong userId,
-        out long? cents)
+        out long? cents,
+        out string? decodedInvoiceNumber)
     {
         cents = null;
         userId = 0;
+        decodedInvoiceNumber = invoiceNumber == GenerateMarker ? null : invoiceNumber;
         if (!ulong.TryParse(userIdText, NumberStyles.None, CultureInfo.InvariantCulture, out userId)
             || userId == 0
-            || CreatorPayoutDocumentService.ValidateInvoiceNumber(invoiceNumber) != null)
+            || decodedInvoiceNumber != null
+                && CreatorPayoutDocumentService.ValidateInvoiceNumber(decodedInvoiceNumber) != null)
             return false;
         if (amountText == "-")
             return true;
@@ -46,18 +52,33 @@ public static class CreatorPayoutMessages
         string ledgerReference,
         string sha256,
         long remainingAvailableCents,
-        bool alreadyExisted = false) =>
+        bool alreadyExisted = false,
+        string? requestedBy = null,
+        PayoutRoute? route = null) =>
         $"""
         Pay **{Eur(cents)} EUR** to {Safe(creatorName)}
         ```
         {string.Join("\n", bankLines.Select(Safe))}
         ```
+        Document: {(route ?? PayoutRoute.UkSelfBilling).DocumentKind} (route {(route ?? PayoutRoute.UkSelfBilling).Route})
         Invoice number: `{invoiceNumber}`
         Account: `{accountId}`
         Ledger reference: `{ledgerReference}`{(alreadyExisted ? " (already existed)" : "")}
         PDF sha256: `{sha256}`
-        Remaining available balance: **{Eur(remainingAvailableCents)} EUR**
+        Remaining available balance: **{Eur(remainingAvailableCents)} EUR**{(requestedBy == null ? "" : $"\nRequested by: {requestedBy}")}
         Pay the creator, then run `/creator payout-complete`.
+        """;
+
+    public static string RequestedBy(ulong requesterId, ulong targetId) =>
+        requesterId == targetId
+            ? $"<@{targetId}> (`{targetId}`)"
+            : $"reviewer <@{requesterId}> on behalf of <@{targetId}> (`{targetId}`)";
+
+    /// <summary>What the creator sees: no booking data, hash or ledger reference.</summary>
+    public static string CreatorConfirmation(long cents, string invoiceNumber, bool teamNotified = true, PayoutRoute? route = null) =>
+        $"""
+        Your payout request for **{Eur(cents)} EUR** is booked and the amount is reserved (invoice `{invoiceNumber}`). It will be reviewed and paid to the bank details you entered. {(route ?? PayoutRoute.UkSelfBilling).AttachedSentence}
+        {(route ?? PayoutRoute.UkSelfBilling).AcceptanceSentence}{(teamNotified ? "" : $"\nWe could not notify the team automatically. Please contact support and quote invoice `{invoiceNumber}`.")}
         """;
 
     public static string PayoutCompleteReply(

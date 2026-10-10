@@ -11,8 +11,61 @@ namespace Coflnet.Discord;
 /// <summary>Our company details, taken from configuration.</summary>
 public sealed record PayoutIssuer(string Name, string Address, string VatId);
 
+/// <summary>Per-route differences of the generated payout document, as data.</summary>
+public sealed record PayoutRoute(
+    CreatorTaxDocumentRoute Route,
+    string DocumentTitle,
+    string DocumentKind,
+    string EvidenceNamespace,
+    string NumberPrefix,
+    bool ReverseCharge,
+    bool PrintCreatorVatId,
+    string? StatementText,
+    string? VatNote,
+    string LineDescription,
+    string PartyLabelCreator,
+    string PartyLabelIssuer,
+    string AttachedSentence,
+    string AcceptanceSentence,
+    CreatorSellerType? RequiredSellerType)
+{
+    public static readonly PayoutRoute UkSelfBilling = new(
+        CreatorTaxDocumentRoute.UkSelfBilling,
+        "Self-billing invoice (Gutschrift)", "self-billing invoice", "selfbilling", "SB", true, true,
+        "This invoice is issued by the recipient of the service under a self-billing agreement.",
+        "VAT 0.00 – Reverse charge – VAT is owed by the recipient of the service "
+            + "(Steuerschuldnerschaft des Leistungsempfängers, § 13b UStG)",
+        "Creator programme commission", "Supplier (creator)", "Recipient / issuer",
+        "Your self-billing invoice is attached.",
+        "By submitting this request you accept this self-billing invoice.",
+        null);
+
+    public static readonly PayoutRoute Statement = new(
+        CreatorTaxDocumentRoute.Statement,
+        "Payout statement (Abrechnung)", "payout statement", "statement", "PS", false, false,
+        null,
+        "No VAT is shown. The payee is recorded as a private individual and not as a VAT-registered business.",
+        "Creator programme remuneration", "Payee (creator)", "Payer",
+        "Your payout statement is attached.",
+        "By submitting this request you confirm this payout statement.",
+        CreatorSellerType.Individual);
+
+    public static readonly IReadOnlyList<PayoutRoute> Supported = [UkSelfBilling, Statement];
+
+    public static PayoutRoute? Find(CreatorTaxDocumentRoute route) =>
+        Supported.FirstOrDefault(item => item.Route == route);
+
+    /// <summary>Message naming the route for routes this command cannot pay; null when supported.</summary>
+    public static string? Unsupported(CreatorTaxDocumentRoute route) => Find(route) != null ? null : route switch
+    {
+        CreatorTaxDocumentRoute.CreatorInvoice =>
+            "The tax document route is CreatorInvoice: the creator must send their own invoice, this command cannot create one.",
+        _ => $"The tax document route is {route}; only UkSelfBilling and Statement payouts are supported by this command."
+    };
+}
+
 /// <summary>
-/// Everything the self-billing invoice needs. The creator's name and address
+/// Everything the payout document needs. The creator's name and address
 /// live only in this in-memory record; nothing here is persisted or logged.
 /// </summary>
 public sealed record PayoutInvoiceInput(
@@ -27,7 +80,8 @@ public sealed record PayoutInvoiceInput(
     PayoutIssuer Issuer,
     long NetEurCents,
     string RewardAccountId,
-    string LedgerReference);
+    string LedgerReference,
+    PayoutRoute? Route = null);
 
 /// <summary>
 /// Pure helpers and the PDF renderer for creator payouts. No I/O, no Discord.
@@ -50,8 +104,25 @@ public static class CreatorPayoutDocumentService
     public static string PayoutReference(string invoiceNumber) =>
         $"discord:payout:{invoiceNumber}";
 
-    public static string EvidenceReference(string invoiceNumber) =>
-        $"selfbilling:{invoiceNumber}";
+    public static string EvidenceReference(string invoiceNumber, PayoutRoute? route = null) =>
+        $"{(route ?? PayoutRoute.UkSelfBilling).EvidenceNamespace}:{invoiceNumber}";
+
+    /// <summary>
+    /// Deterministic per creator per UTC day: a second request that day hits the ledger's existing reference.
+    /// </summary>
+    public static string GenerateInvoiceNumber(string rewardAccountId, DateTime utcNow, PayoutRoute? route = null) =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"{(route ?? PayoutRoute.UkSelfBilling).NumberPrefix}-{utcNow:yyyyMMdd}-{Sha256Hex(System.Text.Encoding.UTF8.GetBytes(rewardAccountId))[..6].ToUpperInvariant()}");
+
+    /// <summary>
+    /// Reviewer: any target and an optional own invoice number. Everyone else: only themselves, generated number.
+    /// </summary>
+    public static bool IsAuthorizedForPayoutRequest(
+        ulong submitterId,
+        ulong targetUserId,
+        bool invoiceNumberSupplied) =>
+        CreatorReviewCommands.IsAuthorizedReviewer(submitterId)
+        || submitterId == targetUserId && !invoiceNumberSupplied;
 
     public static string Sha256Hex(byte[] bytes) =>
         Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
@@ -75,8 +146,12 @@ public static class CreatorPayoutDocumentService
     public static string? ValidateAmount(
         long amountCents,
         long availableCents,
-        long thresholdCents)
+        long thresholdCents,
+        bool friendly = false)
     {
+        if (friendly && availableCents < thresholdCents)
+            return $"You can request a payout from €{thresholdCents / 100m:F2}; you have €{availableCents / 100m:F2} available, so €{(thresholdCents - availableCents) / 100m:F2} more is needed."
+                .Replace(',', '.');
         if (amountCents <= 0)
             return "The payout amount must be positive.";
         if (amountCents > availableCents)
@@ -88,19 +163,39 @@ public static class CreatorPayoutDocumentService
         return null;
     }
 
-    /// <summary>Only an approved, unexpired review on the UK self-billing route may be paid here.</summary>
-    public static string? ValidateOnboarding(CreatorReview? review, DateTime utcNow)
+    /// <summary>Only an approved, unexpired review on a supported payout route may be paid here.</summary>
+    public static string? ValidateOnboarding(CreatorReview? review, DateTime utcNow, bool friendly = false)
     {
+        if (friendly)
+        {
+            var problem = ValidateOnboarding(review, utcNow);
+            return problem == null
+                ? null
+                : review is { Status: CreatorOnboardingStatus.Approved } && !(review.ValidUntilUtc <= utcNow)
+                    ? PayoutRoute.Find(review.TaxDocumentRoute) == null
+                        ? $"Your tax document route is {review.TaxDocumentRoute}, which self-service payouts do not support. Please contact support."
+                        : "Your creator profile is inconsistent with your payout route. Please contact support."
+                    : "Your creator approval is not active (missing, not approved or expired), so no payout can be requested. Please contact support.";
+        }
         if (review == null)
             return "The creator has no onboarding review.";
         if (review.Status != CreatorOnboardingStatus.Approved)
             return $"The creator's onboarding review is {review.Status}, it must be Approved.";
         if (review.ValidUntilUtc <= utcNow)
             return $"The creator's approval expired {review.ValidUntilUtc:yyyy-MM-dd}.";
-        if (review.TaxDocumentRoute != CreatorTaxDocumentRoute.UkSelfBilling)
-            return $"The tax document route is {review.TaxDocumentRoute}; only UkSelfBilling payouts are supported by this command.";
+        if (PayoutRoute.Unsupported(review.TaxDocumentRoute) is { } unsupported)
+            return unsupported;
+        var route = PayoutRoute.Find(review.TaxDocumentRoute)!;
+        if (route.RequiredSellerType is { } seller && review.SellerType != seller)
+            return $"The review is inconsistent: route {route.Route} requires a {seller} seller but the review says {review.SellerType}. Update the review.";
         return null;
     }
+
+    /// <summary>A VAT id may only be printed on routes that show creator VAT ids.</summary>
+    public static string? ValidateCreatorVatId(PayoutRoute route, string? vatId) =>
+        route.PrintCreatorVatId || string.IsNullOrWhiteSpace(vatId)
+            ? null
+            : $"A VAT id cannot be used on the {route.Route} route: a VAT-registered seller needs a different tax route (update the review).";
 
     public static string? ValidatePaymentReference(string? value)
     {
@@ -172,12 +267,14 @@ public static class CreatorPayoutDocumentService
         long grossCents,
         string rewardAccountId,
         string creatorCountry,
-        string pdfSha256) =>
+        string pdfSha256,
+        PayoutRoute? route = null) =>
         JsonSerializer.Serialize(new BookingFile(
             1, "creator-payout", invoiceNumber, invoiceNumber,
             voucherDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             "EUR", grossCents, 0, 0, 0, grossCents, rewardAccountId,
-            creatorCountry, UkSelfBillingRoute, true,
+            creatorCountry, (route ?? PayoutRoute.UkSelfBilling).Route.ToString(),
+            (route ?? PayoutRoute.UkSelfBilling).ReverseCharge,
             LedgerReference(invoiceNumber),
             new BookingEvidence($"{invoiceNumber}.pdf", pdfSha256)),
             BookingOptions);
@@ -202,6 +299,7 @@ public static class CreatorPayoutDocumentService
     public static byte[] RenderPdf(PayoutInvoiceInput input)
     {
         QuestPDF.Settings.License = LicenseType.Community;
+        var route = input.Route ?? PayoutRoute.UkSelfBilling;
         var amount = FormattableString.Invariant($"{input.NetEurCents / 100m:F2}");
         return Document.Create(document => document.Page(page =>
         {
@@ -210,10 +308,9 @@ public static class CreatorPayoutDocumentService
             page.DefaultTextStyle(style => style.FontSize(10));
             page.Header().Column(column =>
             {
-                column.Item().Text("Self-billing invoice (Gutschrift)").FontSize(20).Bold();
-                column.Item().Text(
-                    "This invoice is issued by the recipient of the service under a self-billing agreement.")
-                    .Italic();
+                column.Item().Text(route.DocumentTitle).FontSize(20).Bold();
+                if (route.StatementText != null)
+                    column.Item().Text(route.StatementText).Italic();
             });
             page.Content().PaddingVertical(15).Column(column =>
             {
@@ -221,7 +318,7 @@ public static class CreatorPayoutDocumentService
                 column.Item().Table(table =>
                 {
                     table.ColumnsDefinition(c => { c.ConstantColumn(130); c.RelativeColumn(); });
-                    Row(table, "Invoice number", input.InvoiceNumber);
+                    Row(table, route.Route == CreatorTaxDocumentRoute.Statement ? "Statement number" : "Invoice number", input.InvoiceNumber);
                     Row(table, "Issue date", input.IssueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
                     Row(table, "Service period", input.ServicePeriod);
                 });
@@ -229,17 +326,17 @@ public static class CreatorPayoutDocumentService
                 {
                     row.RelativeItem().Column(party =>
                     {
-                        party.Item().Text("Supplier (creator)").Bold();
+                        party.Item().Text(route.PartyLabelCreator).Bold();
                         party.Item().Text(input.CreatorName);
                         foreach (var line in input.CreatorAddressLines)
                             party.Item().Text(line);
                         party.Item().Text($"Country: {input.CreatorCountry}");
-                        if (!string.IsNullOrWhiteSpace(input.CreatorVatId))
+                        if (route.PrintCreatorVatId && !string.IsNullOrWhiteSpace(input.CreatorVatId))
                             party.Item().Text($"VAT ID: {input.CreatorVatId}");
                     });
                     row.RelativeItem().Column(party =>
                     {
-                        party.Item().Text("Recipient / issuer").Bold();
+                        party.Item().Text(route.PartyLabelIssuer).Bold();
                         party.Item().Text(input.Issuer.Name);
                         foreach (var line in ParseAddress(input.Issuer.Address))
                             party.Item().Text(line);
@@ -262,17 +359,21 @@ public static class CreatorPayoutDocumentService
                         header.Cell().BorderBottom(1).Text("Description").Bold();
                         header.Cell().BorderBottom(1).AlignRight().Text("Net amount (EUR)").Bold();
                     });
-                    table.Cell().Text("Creator programme commission");
+                    table.Cell().Text(route.LineDescription);
                     table.Cell().AlignRight().Text(amount);
-                    table.Cell().Text("VAT 0.00 – Reverse charge – VAT is owed by the recipient of the service "
-                        + "(Steuerschuldnerschaft des Leistungsempfängers, § 13b UStG)");
-                    table.Cell().AlignRight().Text("0.00");
+                    if (route.ReverseCharge)
+                    {
+                        table.Cell().Text(route.VatNote!);
+                        table.Cell().AlignRight().Text("0.00");
+                    }
                     table.Cell().BorderTop(1).Text("Total payable").Bold();
                     table.Cell().BorderTop(1).AlignRight().Text($"EUR {amount}").Bold();
                 });
             });
             page.Footer().Column(column =>
             {
+                if (!route.ReverseCharge && route.VatNote != null)
+                    column.Item().Text(route.VatNote).FontSize(8);
                 column.Item().Text($"Reward account: {input.RewardAccountId}").FontSize(8);
                 column.Item().Text($"Ledger reference: {input.LedgerReference}").FontSize(8);
             });

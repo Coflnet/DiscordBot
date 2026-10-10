@@ -39,16 +39,21 @@ Configs after that acceptance where paid sellers are supported; elsewhere the
 creator may publish free Configs. Payout remains unavailable until the ordinary
 payout requirements are complete.
 
-Payouts (reviewer only, ephemeral replies). `/creator payout-status user:` shows
-a creator's balance, whether the threshold is reached, the amount payable, the
-reviewed tax route/country and open payout requests. `/creator payout-request
-user: invoice_number: [amount:]` opens a form for legal name, postal address,
-bank details, optional VAT id and service period, then (UK self-billing route
-only, approved review, amount between threshold and available) appends a
-`PayoutRequest` to the ledger and replies with the amount to transfer, the bank
-details, the self-billing invoice (Gutschrift) `{invoice}.pdf` and an accounting
-`{invoice}.booking.json`. Name, address and bank details appear only in the PDF
-and the reply; they are never stored, logged or sent to the ledger.
+Payouts. Any creator can run `/creator payout-request` for themselves (guild or
+bot DM) with no options, or with an optional `amount`. The bot opens a form for legal
+name, postal address, bank details, optional VAT id and service period (or pass `name`,
+`address`, `bank_details` [and `vat_id`, `period`] as slash options, `;` separating
+lines, to skip the form; all three or none). The checks are: linked account, approved
+review on the `UkSelfBilling` route (UK VAT business: self-billing invoice, reverse charge) or the `Statement` route (private individual, seller type Individual: payout statement without VAT; a VAT id is refused), amount between the threshold and the available
+balance. The creator gets the self-billing invoice (Gutschrift) or payout statement (Abrechnung) PDF and a confirmation;
+the reviewer is DMed the PDF, the accounting `{invoice}.booking.json`, the amount to
+transfer, the bank details and the requester. The invoice number is generated
+(`SB-yyyyMMdd-XXXXXX`, or `PS-...` for Statement, one per creator per day). The reviewer may also pass `user` and
+`invoice_number` to request on a creator's behalf; then both files are returned directly.
+Name, address and bank details appear only in the PDF and those messages; they are never
+stored, logged or sent to the ledger. Reviewer only: `/creator payout-status user:` shows
+a creator's balance, whether the threshold is reached, the amount payable, the reviewed
+tax route/country and open payout requests.
 `/creator payout-complete user: invoice_number: payment_reference:` (for example
 `paypal:TXID`) appends the matching `Payout` and reports the new balance.
 Configure `REWARDS:PAYOUT_TOKEN` (min 32 characters, separate from the write
