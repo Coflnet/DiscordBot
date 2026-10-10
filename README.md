@@ -54,7 +54,7 @@ Name, address and bank details appear only in the PDF and those messages; they a
 stored, logged or sent to the ledger. Reviewer only: `/creator payout-status user:` shows
 a creator's balance, whether the threshold is reached, the amount payable, the reviewed
 tax route/country and open payout requests.
-`/creator payout-complete user: invoice_number: payment_reference:` (for example
+`/creator payout-complete user: payment_reference: [invoice_number:]` (the number may be omitted when the creator has exactly one open request; several open requests are listed; payment reference for example
 `paypal:TXID`) appends the matching `Payout` and reports the new balance.
 Configure `REWARDS:PAYOUT_TOKEN` (min 32 characters, separate from the write
 token). The payer is always Coflnet GmbH; `CREATOR_PAYOUT:ISSUER_NAME`,

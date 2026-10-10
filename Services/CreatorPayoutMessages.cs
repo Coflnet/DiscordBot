@@ -57,11 +57,11 @@ public static class CreatorPayoutMessages
         PayoutRoute? route = null) =>
         $"""
         Pay **{Eur(cents)} EUR** to {Safe(creatorName)}
+        Invoice number: `{invoiceNumber}`
         ```
         {string.Join("\n", bankLines.Select(Safe))}
         ```
         Document: {(route ?? PayoutRoute.UkSelfBilling).DocumentKind} (route {(route ?? PayoutRoute.UkSelfBilling).Route})
-        Invoice number: `{invoiceNumber}`
         Account: `{accountId}`
         Ledger reference: `{ledgerReference}`{(alreadyExisted ? " (already existed)" : "")}
         PDF sha256: `{sha256}`

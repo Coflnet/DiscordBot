@@ -296,6 +296,38 @@ public static class CreatorPayoutDocumentService
         return (request, null);
     }
 
+    private const string RequestReferencePrefix = "discord:payout-request:";
+
+    /// <summary>
+    /// Picks the payout request to complete. With an invoice number this is
+    /// <see cref="FindOpenRequest"/>; without, the creator's single open request created by this bot.
+    /// Several open requests, or a foreign reference, are listed instead of guessed.
+    /// </summary>
+    public static (RewardLedgerEntryInfo? Request, string? InvoiceNumber, string? Error) SelectOpenRequest(
+        IEnumerable<RewardLedgerEntryInfo> ledger,
+        string? invoiceNumber)
+    {
+        var entries = ledger.ToList();
+        if (!string.IsNullOrWhiteSpace(invoiceNumber))
+        {
+            var (found, error) = FindOpenRequest(entries, invoiceNumber);
+            return (found, found == null ? null : invoiceNumber, error);
+        }
+        var open = CreatorPayoutMessages.OpenRequests(entries);
+        var completable = open.Where(item => item.Reference.StartsWith(RequestReferencePrefix, StringComparison.Ordinal)
+            && item.Reference.Length > RequestReferencePrefix.Length).ToList();
+        if (open.Count == 0)
+            return (null, null, "No open payout request exists for this account.");
+        if (completable.Count == 1 && open.Count == 1)
+            return (completable[0], completable[0].Reference[RequestReferencePrefix.Length..], null);
+        var list = string.Join("\n", open.Select(item => completable.Contains(item)
+            ? $"- `{item.Reference[RequestReferencePrefix.Length..]}`: {CreatorPayoutMessages.Eur(item.RemunerationEurCents)} EUR"
+            : $"- `{item.Reference}`: {CreatorPayoutMessages.Eur(item.RemunerationEurCents)} EUR (not completable here, foreign reference)"));
+        return (null, null, completable.Count == 0
+            ? $"The open payout request(s) were not created by this bot and cannot be completed here:\n{list}"
+            : $"There are several open payout requests, pass `invoice_number` to choose one:\n{list}");
+    }
+
     public static byte[] RenderPdf(PayoutInvoiceInput input)
     {
         QuestPDF.Settings.License = LicenseType.Community;

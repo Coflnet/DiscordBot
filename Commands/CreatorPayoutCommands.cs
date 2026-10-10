@@ -322,8 +322,8 @@ public sealed partial class CreatorReviewCommands
     [SlashCommand("payout-complete", "Record that a booked creator payout was paid")]
     public async Task PayoutComplete(
         [Summary("user", "The creator's Discord user")] IUser user,
-        [Summary("invoice_number", "The invoice number of the payout request")] string invoiceNumber,
-        [Summary("payment_reference", "Namespaced payment reference, e.g. paypal:TXID or bank:REF")] string paymentReference)
+        [Summary("payment_reference", "Namespaced payment reference, e.g. paypal:TXID or bank:REF")] string paymentReference,
+        [Summary("invoice_number", "Number of the request; optional if the creator has one open request")] string invoiceNumber = "")
     {
         if (!await RequireReviewer())
             return;
@@ -331,7 +331,7 @@ public sealed partial class CreatorReviewCommands
         try
         {
             invoiceNumber = invoiceNumber.Trim();
-            var error = CreatorPayoutDocumentService.ValidateInvoiceNumber(invoiceNumber)
+            var error = (invoiceNumber.Length == 0 ? null : CreatorPayoutDocumentService.ValidateInvoiceNumber(invoiceNumber))
                 ?? CreatorPayoutDocumentService.ValidatePaymentReference(paymentReference);
             if (error != null)
             {
@@ -344,13 +344,14 @@ public sealed partial class CreatorReviewCommands
                 await FollowupAsync("That user has not linked an account (`/update-mc-user`).", ephemeral: true);
                 return;
             }
-            var (request, notFound) = CreatorPayoutDocumentService.FindOpenRequest(
+            var (request, selected, notFound) = CreatorPayoutDocumentService.SelectOpenRequest(
                 await rewards.GetLedger(account.UserId), invoiceNumber);
             if (request == null)
             {
                 await FollowupAsync(notFound!, ephemeral: true);
                 return;
             }
+            invoiceNumber = selected!;
             try
             {
                 await rewards.RecordPayout(new RewardGrantRequest(

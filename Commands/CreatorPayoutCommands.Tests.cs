@@ -40,7 +40,10 @@ public class CreatorPayoutCommandsTests
             Assert.That(commands["payout-request"].Parameters.Single(p => p.Name == "address").Description, Does.Contain(";"));
             Assert.That(commands["payout-request"].Parameters.Single(p => p.Name == "bank_details").Description, Does.Contain(";"));
             Assert.That(commands["payout-complete"].Parameters.Where(p => p.IsRequired).Select(p => p.Name),
-                Is.EquivalentTo(new[] { "user", "invoice_number", "payment_reference" }));
+                Is.EquivalentTo(new[] { "user", "payment_reference" }));
+            Assert.That(commands["payout-complete"].Parameters.Select(p => p.Name),
+                Is.EqualTo(new[] { "user", "payment_reference", "invoice_number" }));
+            Assert.That(commands["payout-complete"].Parameters.All(p => p.Description.Length <= 100), Is.True);
             Assert.That(commands["payout-status"].Parameters.Select(p => p.Name), Is.EquivalentTo(new[] { "user" }));
             Assert.That(module.ModalCommands.Select(item => item.Name), Has.Some.Contain("creator-payout"));
         });
@@ -459,5 +462,49 @@ public class CreatorPayoutCommandsTests
             Assert.That(selfBilling, Does.Contain("By submitting this request you accept this self-billing invoice."));
             Assert.That(reviewer, Does.Contain("payout statement (route Statement)"));
         });
+    }
+
+    private static RewardLedgerEntryInfo Req(string reference, long cents = 7000) =>
+        new(Guid.NewGuid(), reference, 4, cents, "r", DateTime.UtcNow);
+
+    [Test]
+    public void CompleteWithoutNumberSelectsOnlyASingleOpenRequest()
+    {
+        var one = Req("discord:payout-request:SB-20261010-AAAAAA");
+        var paid = Req("discord:payout-request:SB-OLD");
+        var close = new RewardLedgerEntryInfo(Guid.NewGuid(), "discord:payout:SB-OLD", 5, -7000, "r", DateTime.UtcNow, paid.Id);
+        var two = Req("discord:payout-request:PS-20261011-BBBBBB", 8000);
+        var foreign = Req("other:tool:1");
+        Assert.Multiple(() =>
+        {
+            var single = CreatorPayoutDocumentService.SelectOpenRequest([one, paid, close], null);
+            Assert.That(single.Request, Is.EqualTo(one));
+            Assert.That(single.InvoiceNumber, Is.EqualTo("SB-20261010-AAAAAA"));
+
+            var several = CreatorPayoutDocumentService.SelectOpenRequest([one, two], "");
+            Assert.That(several.Request, Is.Null);
+            Assert.That(several.Error, Does.Contain("pass `invoice_number`").And.Contain("SB-20261010-AAAAAA")
+                .And.Contain("70.00 EUR").And.Contain("PS-20261011-BBBBBB").And.Contain("80.00 EUR"));
+
+            Assert.That(CreatorPayoutDocumentService.SelectOpenRequest([paid, close], null).Error, Does.Contain("No open payout request"));
+            Assert.That(CreatorPayoutDocumentService.SelectOpenRequest([], null).Request, Is.Null);
+
+            var withForeign = CreatorPayoutDocumentService.SelectOpenRequest([one, foreign], null);
+            Assert.That(withForeign.Request, Is.Null, "a foreign open request makes auto-selection ambiguous");
+            Assert.That(withForeign.Error, Does.Contain("other:tool:1").And.Contain("not completable here"));
+            Assert.That(CreatorPayoutDocumentService.SelectOpenRequest([foreign], null).Error, Does.Contain("cannot be completed here"));
+
+            var supplied = CreatorPayoutDocumentService.SelectOpenRequest([one, two], "PS-20261011-BBBBBB");
+            Assert.That(supplied.Request, Is.EqualTo(two));
+            Assert.That(supplied.InvoiceNumber, Is.EqualTo("PS-20261011-BBBBBB"));
+        });
+    }
+
+    [Test]
+    public void ReviewerTextShowsTheInvoiceNumberRightAfterTheAmount()
+    {
+        var text = CreatorPayoutMessages.PayoutRequestReply(
+            7000, "Jane", ["IBAN"], "PS-20261010-ABCDEF", "a", "discord:payout-request:PS-20261010-ABCDEF", Sha, 0);
+        Assert.That(text.Split('\n')[1], Is.EqualTo("Invoice number: `PS-20261010-ABCDEF`"));
     }
 }
