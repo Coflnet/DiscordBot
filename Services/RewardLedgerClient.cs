@@ -32,6 +32,52 @@ public sealed class RewardLedgerClient(
                 "Reward ledger returned an empty response.");
     }
 
+    /// <summary>
+    /// Appends a PayoutRequest or Payout entry, which the ledger authorises
+    /// with its separate payout token instead of the write token.
+    /// </summary>
+    public async Task<RewardGrantResult> RecordPayout(
+        RewardGrantRequest reward,
+        CancellationToken cancellationToken = default)
+    {
+        if (reward.Kind is not (4 or 5))
+            throw new ArgumentException(
+                "Only payout requests and payouts use the payout token.", nameof(reward));
+        var (baseUri, token) = Credentials("PAYOUT_TOKEN");
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            new Uri(baseUri, "/api/rewards/entries"));
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer", token);
+        request.Content = JsonContent.Create(reward);
+        using var response = await http.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (body.Length > 300)
+                body = body[..300];
+            throw new HttpRequestException(
+                $"Reward ledger rejected the entry ({(int)response.StatusCode}): {body}",
+                null, response.StatusCode);
+        }
+        return await response.Content.ReadFromJsonAsync<RewardGrantResult>(
+            cancellationToken: cancellationToken)
+            ?? throw new InvalidOperationException(
+                "Reward ledger returned an empty response.");
+    }
+
+    /// <summary>Our company details for self-billing invoices; null unless all are configured.</summary>
+    public PayoutIssuer? GetIssuer()
+    {
+        var name = configuration["CREATOR_PAYOUT:ISSUER_NAME"];
+        var address = configuration["CREATOR_PAYOUT:ISSUER_ADDRESS"];
+        var vatId = configuration["CREATOR_PAYOUT:ISSUER_VAT_ID"];
+        return string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(address)
+            || string.IsNullOrWhiteSpace(vatId)
+                ? null
+                : new(name.Trim(), address.Trim(), vatId.Trim());
+    }
+
     public async Task<RewardBalanceInfo> GetBalance(
         string rewardAccountId,
         CancellationToken cancellationToken = default)
@@ -74,7 +120,7 @@ public sealed class RewardLedgerClient(
         var token = configuration[$"REWARDS:{tokenKey}"];
         if (!Uri.TryCreate(configuration["REFERRAL_BASE_URL"], UriKind.Absolute,
                 out var baseUri)
-            || token?.Length < 32)
+            || string.IsNullOrEmpty(token) || token.Length < 32)
             throw new InvalidOperationException(
                 "Reward ledger write access is not configured.");
         return (baseUri, token!);
@@ -111,4 +157,5 @@ public record RewardLedgerEntryInfo(
     int Kind,
     long RemunerationEurCents,
     string Reason,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    Guid? RelatedEntryId = null);

@@ -14,7 +14,7 @@ namespace Coflnet.Discord;
 [Group("creator", "Manage Expert creator applications")]
 [IntegrationType(ApplicationIntegrationType.GuildInstall)]
 [CommandContextType(InteractionContextType.Guild, InteractionContextType.BotDm)]
-public sealed class CreatorReviewCommands(
+public sealed partial class CreatorReviewCommands(
     Persistence persistence,
     DiscordHandler discord,
     IConnectApi connect,

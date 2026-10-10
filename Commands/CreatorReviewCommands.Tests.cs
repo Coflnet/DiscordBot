@@ -96,7 +96,8 @@ public class CreatorReviewCommandsTests
             Is.False, "Applicants may open the private instructions without entering application text.");
         Assert.That(module.SlashCommands.Select(item => item.Name),
             Is.EquivalentTo(new[]
-                { "apply", "balance", "review", "request-guardian", "set-status", "show" }));
+                { "apply", "balance", "review", "request-guardian", "set-status", "show",
+                    "payout-request", "payout-complete", "payout-status" }));
         Assert.That(module.SlashCommands.Single(item => item.Name == "balance").Parameters,
             Is.Empty, "Creators must only query their own linked account.");
         var review = module.SlashCommands.Single(item => item.Name == "review");

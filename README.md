@@ -38,6 +38,22 @@ not a Coflnet seller or fee owner. An approved creator age 16+ may publish paid
 Configs after that acceptance where paid sellers are supported; elsewhere the
 creator may publish free Configs. Payout remains unavailable until the ordinary
 payout requirements are complete.
+
+Payouts (reviewer only, ephemeral replies). `/creator payout-status user:` shows
+a creator's balance, whether the threshold is reached, the amount payable, the
+reviewed tax route/country and open payout requests. `/creator payout-request
+user: invoice_number: [amount:]` opens a form for legal name, postal address,
+bank details, optional VAT id and service period, then (UK self-billing route
+only, approved review, amount between threshold and available) appends a
+`PayoutRequest` to the ledger and replies with the amount to transfer, the bank
+details, the self-billing invoice (Gutschrift) `{invoice}.pdf` and an accounting
+`{invoice}.booking.json`. Name, address and bank details appear only in the PDF
+and the reply; they are never stored, logged or sent to the ledger.
+`/creator payout-complete user: invoice_number: payment_reference:` (for example
+`paypal:TXID`) appends the matching `Payout` and reports the new balance.
+Configure `REWARDS:PAYOUT_TOKEN` (min 32 characters, separate from the write
+token). The payer is always Coflnet GmbH; `CREATOR_PAYOUT:ISSUER_NAME`,
+`ISSUER_ADDRESS` and `ISSUER_VAT_ID` default to its details in `appsettings.json`.
 For a business, review the entity and adult signatory authority and select its
 EU invoice, England/Wales VAT self-billing, or settlement-statement route before
 paid publication; business status is not a minor-capacity workaround.

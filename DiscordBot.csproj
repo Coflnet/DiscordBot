@@ -24,6 +24,7 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.*" />
     <PackageReference Include="Octokit" Version="14.0.0" />
     <PackageReference Include="Octokit.GraphQL" Version="0.4.0-beta" />
+    <PackageReference Include="QuestPDF" Version="2026.9.1" />
     <PackageReference Include="StackExchange.Redis" Version="3.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.2" />
     <PackageReference Include="Twilio" Version="7.14.9" />
