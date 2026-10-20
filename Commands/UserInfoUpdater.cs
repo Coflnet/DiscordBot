@@ -51,7 +51,7 @@ public class UserInfoUpdater
 
     public async Task UpdatePremiumTierAndSave(DiscordAccountInfo existing)
     {
-        var owning = await userApi.UserUserIdOwnsUntilPostAsync(existing.UserId, ["premium", "premium-plus"]);
+        var owning = await userApi.UserUserIdOwnsUntilPostAsync(existing.UserId, requestBody: ["premium", "premium-plus"]);
         if (owning.TryGetValue("premium-plus", out var premPlus) && premPlus > DateTime.UtcNow)
         {
             existing.AccountTier = AccountTier.PREMIUM_PLUS;
