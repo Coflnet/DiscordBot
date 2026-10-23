@@ -14,6 +14,8 @@ public class FaqService
     private readonly ILogger<FaqService> logger;
     private List<FaqEntry> entries = new();
 
+    internal void SetEntries(List<FaqEntry> faqEntries) => entries = faqEntries;
+
     public FaqService(ILogger<FaqService> logger)
     {
         this.logger = logger;
@@ -61,6 +63,13 @@ public class FaqService
             // All question keywords must be present
             if (entry.Question.All(q => lower.Contains(q)))
             {
+                if (string.IsNullOrWhiteSpace(entry.Answer))
+                {
+                    // Discord rejects empty message content, so an empty answer must never be sent
+                    logger.LogWarning("FAQ entry with keywords {keywords} has an empty answer, skipping it",
+                        string.Join(", ", entry.Question));
+                    continue;
+                }
                 logger.LogInformation("FAQ matched keywords {keywords} for message '{message}'",
                     string.Join(", ", entry.Question), CreateLogSample(message));
                 return entry.Answer;
