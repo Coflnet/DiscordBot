@@ -10,3 +10,54 @@ public class DiscordHandlerTests
         Assert.That(DiscordHandler.IsNitroScamLink(content), Is.EqualTo(expected));
     }
 }
+
+public class FallbackMessageSourceTests
+{
+    [Test]
+    public void MainClientDoesNotRequestMessageContent()
+    {
+        Assert.That(DiscordHandler.MainIntents.HasFlag(Discord.GatewayIntents.MessageContent), Is.False);
+        Assert.That(DiscordHandler.MainIntents.HasFlag(Discord.GatewayIntents.GuildMessages), Is.True);
+        Assert.That(DiscordHandler.MainIntents.HasFlag(Discord.GatewayIntents.GuildScheduledEvents), Is.False);
+    }
+
+    [Test]
+    public void FallbackClientOnlyReadsMessages()
+    {
+        Assert.That(FallbackMessageSource.Intents, Is.EqualTo(
+            Discord.GatewayIntents.Guilds | Discord.GatewayIntents.GuildMessages | Discord.GatewayIntents.MessageContent));
+    }
+
+    [TestCase(null, false)]
+    [TestCase("", false)]
+    [TestCase("   ", false)]
+    [TestCase("token", true)]
+    public void DisabledWithoutToken(string? token, bool expected)
+    {
+        Assert.That(FallbackMessageSource.IsEnabled(token), Is.EqualTo(expected));
+    }
+
+    // source, guildId, fallbackInGuild, mainInGuild, expected
+    [TestCase(MessageSource.Fallback, 1UL, true, true, true, Description = "shared guild: fallback serves")]
+    [TestCase(MessageSource.Main, 1UL, true, true, false, Description = "shared guild: main ignored")]
+    [TestCase(MessageSource.Main, 1UL, false, true, true, Description = "main-only guild: main serves")]
+    [TestCase(MessageSource.Fallback, 1UL, true, false, false, Description = "fallback-only guild: ignored")]
+    [TestCase(MessageSource.Fallback, null, false, false, false, Description = "DM to fallback bot ignored")]
+    [TestCase(MessageSource.Main, null, false, false, true, Description = "DM to main bot kept")]
+    [TestCase(MessageSource.Main, 1UL, false, true, true, Description = "fallback disabled: main serves")]
+    public void RoutesMessagesToExactlyOneSource(MessageSource source, ulong? guildId, bool fallbackInGuild, bool mainInGuild, bool expected)
+    {
+        Assert.That(FallbackMessageSource.ShouldProcess(source, guildId, fallbackInGuild, mainInGuild), Is.EqualTo(expected));
+    }
+
+    // Regression: without Message Content the main client sees empty text for normal guild messages,
+    // which must not trigger the "no text + 4 images" compromised-account rule.
+    [TestCase(MessageSource.Fallback, false, false, true)]
+    [TestCase(MessageSource.Main, false, false, false)]
+    [TestCase(MessageSource.Main, true, false, true)]
+    [TestCase(MessageSource.Main, false, true, true)]
+    public void ContentOnlyTrustedWhenDelivered(MessageSource source, bool isDm, bool mentionsMainBot, bool expected)
+    {
+        Assert.That(FallbackMessageSource.IsContentAvailable(source, isDm, mentionsMainBot), Is.EqualTo(expected));
+    }
+}

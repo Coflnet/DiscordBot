@@ -81,6 +81,11 @@ public class DiscordHandler : BackgroundService
     private ulong _supportChannelId;
     private ulong _bugReportChannelId;
 
+    // MessageContent was revoked for this application; content comes from the temporary FallbackMessageSource.
+    internal const GatewayIntents MainIntents = GatewayIntents.AllUnprivileged & ~GatewayIntents.GuildScheduledEvents;
+
+    private DiscordSocketClient? fallbackClient;
+
     public DiscordHandler(ILogger<DiscordHandler> logger, IConfiguration config, IServiceProvider serviceProvider, ChatService chatService, Persistence persistence, UserInfoUpdater userInfoUpdater, FaqService faqService)
     {
         this.logger = logger;
@@ -106,7 +111,7 @@ public class DiscordHandler : BackgroundService
             LogLevel = LogSeverity.Debug,
             // GuildScheduledEvents is in AllUnprivileged but we don't handle those events
             // (Discord.Net warns about it), so drop it.
-            GatewayIntents = (GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent) & ~GatewayIntents.GuildScheduledEvents,
+            GatewayIntents = MainIntents,
             // AlwaysDownloadUsers triggers a member download across every guild on READY,
             // which requires the privileged GuildMembers intent (not enabled) so it throws,
             // and stalls guild availability - causing "Unknown Channel" races on startup.
@@ -119,12 +124,13 @@ public class DiscordHandler : BackgroundService
         client.Log += Log;
         client.Ready += Init;
         client.Disconnected += OnDisconnected;
-        client.MessageReceived += OnMessageReceived;
+        client.MessageReceived += msg => OnMessageReceived(MessageSource.Main, msg);
         client.InteractionCreated += OnInteractionCreated;
         client.JoinedGuild += OnJoinedGuild;
         await client!.LoginAsync(TokenType.Bot, _config["BotToken"]);
         // set intent to receive message
         await client.StartAsync();
+        await StartFallbackSource();
         var sub = await chatService.Subscribe(OnMcChatMessage);
         logger.LogInformation("Discord bot starting, waiting for gateway to become ready (not connected yet)");
 
@@ -647,17 +653,95 @@ public class DiscordHandler : BackgroundService
         }
     }
 
-    private async Task OnMessageReceived(SocketMessage msg)
+    // TEMPORARY BRIDGE (see FallbackMessageSource): second read-only connection supplying message content.
+    private async Task StartFallbackSource()
+    {
+        var token = _config[FallbackMessageSource.TokenConfigKey];
+        if (!FallbackMessageSource.IsEnabled(token))
+        {
+            logger.LogWarning("Fallback message listener is NOT active ({key} not set): message content will be empty for guild messages", FallbackMessageSource.TokenConfigKey);
+            return;
+        }
+        try
+        {
+            var fallback = FallbackMessageSource.CreateClient();
+            fallback.Log += Log;
+            fallback.MessageReceived += msg => OnMessageReceived(MessageSource.Fallback, msg);
+            await fallback.LoginAsync(TokenType.Bot, token);
+            await fallback.StartAsync();
+            fallbackClient = fallback;
+            logger.LogInformation("Fallback message listener is ACTIVE (second gateway connection supplying message content)");
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Fallback message listener failed to start, continuing with the main client only");
+            fallbackClient?.Dispose();
+            fallbackClient = null;
+        }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        var fallback = fallbackClient;
+        fallbackClient = null;
+        if (fallback != null)
+        {
+            try
+            {
+                await fallback.StopAsync();
+                fallback.Dispose();
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning(e, "Error stopping fallback message listener");
+            }
+        }
+        await base.StopAsync(cancellationToken);
+    }
+
+    private async Task OnMessageReceived(MessageSource origin, SocketMessage msg)
     {
         try
         {
-            if (msg.Author.IsBot) return;
-            await OnMessage(msg);
+            if (msg.Author.IsBot || msg.Author.IsWebhook) return;
+            var incoming = await ResolveIncoming(origin, msg);
+            if (incoming == null) return;
+            await OnMessage(incoming);
         }
         catch (System.Exception e)
         {
             logger.LogError(e, "Error handling message");
         }
+    }
+
+    /// <summary>Applies the dedupe rules and maps the message onto main-client objects.</summary>
+    private async Task<IncomingMessage?> ResolveIncoming(MessageSource origin, SocketMessage msg)
+    {
+        if (client == null)
+            return null;
+        var sourceGuild = (msg.Channel as SocketGuildChannel)?.Guild;
+        var fallbackInGuild = sourceGuild != null && fallbackClient?.GetGuild(sourceGuild.Id) != null;
+        var mainInGuild = sourceGuild != null && client.GetGuild(sourceGuild.Id) != null;
+        if (!FallbackMessageSource.ShouldProcess(origin, sourceGuild?.Id, fallbackInGuild, mainInGuild))
+            return null;
+        if (origin == MessageSource.Main)
+        {
+            var mentionsMainBot = client.CurrentUser != null && msg.MentionedUsers.Any(u => u.Id == client.CurrentUser.Id);
+            var contentAvailable = FallbackMessageSource.IsContentAvailable(origin, sourceGuild == null, mentionsMainBot);
+            return new IncomingMessage(msg, origin, msg.Author, msg.Channel, sourceGuild, contentAvailable);
+        }
+
+        var guild = client.GetGuild(sourceGuild!.Id);
+        var channel = (guild.GetChannel(msg.Channel.Id) as IMessageChannel)
+            ?? await client.GetChannelAsync(msg.Channel.Id) as IMessageChannel;
+        // no GuildMembers intent: cache first, REST otherwise
+        var author = await ((IGuild)guild).GetUserAsync(msg.Author.Id);
+        if (channel == null || author == null)
+        {
+            logger.LogDebug("Could not resolve channel {channelId} or author {userId} through the main client", msg.Channel.Id, msg.Author.Id);
+            return null;
+        }
+        return new IncomingMessage(msg, origin, author, channel, guild, contentAvailable: true);
     }
 
     private async Task OnInteractionCreated(SocketInteraction interaction)
@@ -744,24 +828,24 @@ public class DiscordHandler : BackgroundService
         return Task.CompletedTask;
     }
 
-    private async Task OnMessage(SocketMessage msg)
+    private async Task OnMessage(IncomingMessage msg)
     {
         // ignore messages from bots and webhooks
         if (msg.Author.IsBot || msg.Author.IsWebhook) return;
-        var channelName = (msg.Channel as SocketGuildChannel)?.Name;
+        var channelName = msg.ChannelName;
 
         if (MessageController.IsConfiguredCacheChannel(msg.Channel.Id))
         {
             var mentionedUsers = msg.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
-            await persistence.SaveDiscordMessage(MessageController.MapMessage(msg, mentionedUsers));
+            await persistence.SaveDiscordMessage(MessageController.MapMessage(msg.Source, mentionedUsers));
         }
 
         // Detect a compromised account dumping images into multiple channels in fast succession.
         if (await HandleMultiChannelImageSpam(msg))
             return;
 
-        if ((msg.Channel as SocketGuildChannel)?.Guild is SocketGuild guild
-            && msg.Author is SocketGuildUser compromisedGuildUser
+        if (msg.Guild is SocketGuild guild
+            && msg.Author is IGuildUser compromisedGuildUser
             && IsBroWithFourImages(msg))
         {
             var hasMessageInLast24Hours = await UserHasRecentMessageInGuild(guild, msg.Author.Id, DateTimeOffset.UtcNow.AddHours(-24), msg.Id);
@@ -807,7 +891,7 @@ public class DiscordHandler : BackgroundService
         }
         
         // Check for suspicious hacked account messages: empty content + 4 image attachments
-        if (string.IsNullOrWhiteSpace(msg.Content) && msg.Attachments.Count == 4)
+        if (msg.ContentAvailable && string.IsNullOrWhiteSpace(msg.Content) && msg.Attachments.Count == 4)
         {
             // Check if all attachments are images
             bool allImages = msg.Attachments.All(att => 
@@ -827,7 +911,7 @@ public class DiscordHandler : BackgroundService
                         logger.LogInformation("Deleted suspicious message {messageId} from user {userId}", msg.Id, msg.Author.Id);
                         
                         // Optionally timeout the user
-                        if (msg.Author is SocketGuildUser guildUser)
+                        if (msg.Author is IGuildUser guildUser)
                         {
                             await guildUser.SetTimeOutAsync(TimeSpan.FromHours(1));
                             await msg.Author.SendMessageAsync(
@@ -861,15 +945,15 @@ public class DiscordHandler : BackgroundService
         {
             // delete steam links
             await msg.DeleteAsync();
-            if (msg.Author is SocketGuildUser steamUser)
+            if (msg.Author is IGuildUser steamUser)
             {
                 await steamUser.SetTimeOutAsync(TimeSpan.FromHours(1));
-                var serverName = (msg.Channel as SocketGuildChannel)?.Guild.Name ?? "Coflnet";
+                var serverName = msg.Guild?.Name ?? "Coflnet";
                 await msg.Author.SendMessageAsync($"You posted a steam link (probably got hacked). Please secure your account. We timed you out for 1 hour on {serverName}");
                 return;
             }
             await msg.Author.SendMessageAsync("You posted a scam link (probably got hacked). Please secure your account. You can rejoin Coflnet discord in 10 minutes via the link on https://sky.coflnet.com");
-            var kickTask = (msg.Author as SocketGuildUser)?.KickAsync();
+            var kickTask = (msg.Author as IGuildUser)?.KickAsync();
             if (kickTask != null)
                 await kickTask;
             return;
@@ -877,7 +961,7 @@ public class DiscordHandler : BackgroundService
         if (msg.Content.Contains("@everyone"))
         {
             await msg.DeleteAsync();
-            if (msg.Author is SocketGuildUser guildUser)
+            if (msg.Author is IGuildUser guildUser)
             {
                 await guildUser.SetTimeOutAsync(TimeSpan.FromHours(1));
                 await msg.Author.SendMessageAsync("You have been timed out for 1 hour for using @everyone");
@@ -921,7 +1005,7 @@ public class DiscordHandler : BackgroundService
         return !string.IsNullOrEmpty(ext) && ImageExtensions.Contains(ext);
     }
 
-    private static bool IsBroWithFourImages(SocketMessage msg)
+    private static bool IsBroWithFourImages(IncomingMessage msg)
     {
         return string.Equals(msg.Content.Trim(), "bro", StringComparison.OrdinalIgnoreCase)
             && msg.Attachments.Count == 4
@@ -937,17 +1021,16 @@ public class DiscordHandler : BackgroundService
     /// positives on genuinely active members.
     /// </summary>
     /// <returns>true if the message was handled (and processing should stop).</returns>
-    private async Task<bool> HandleMultiChannelImageSpam(SocketMessage msg)
+    private async Task<bool> HandleMultiChannelImageSpam(IncomingMessage msg)
     {
-        if (msg.Channel is not SocketGuildChannel guildChannel
-            || msg.Author is not SocketGuildUser guildUser)
+        if (msg.Guild is not SocketGuild guild
+            || msg.Author is not IGuildUser guildUser)
             return false;
 
         var burst = TrackMultiChannelImagePosts(msg);
         if (burst == null)
             return false; // no image, or not yet spread across multiple channels
 
-        var guild = guildChannel.Guild;
         var burstStart = burst.Min(p => p.Time);
         var burstIds = burst.Select(p => p.MessageId).ToHashSet();
         var channelCount = burst.Select(p => p.ContextChannelId).Distinct().Count();
@@ -1013,7 +1096,7 @@ public class DiscordHandler : BackgroundService
     /// (all image posts within <see cref="MultiChannelImageWindow"/>) when it spans 2+
     /// distinct channels, otherwise null.
     /// </summary>
-    private List<ImagePost>? TrackMultiChannelImagePosts(SocketMessage msg)
+    private List<ImagePost>? TrackMultiChannelImagePosts(IncomingMessage msg)
     {
         if (msg.Attachments.Count == 0 || !msg.Attachments.Any(IsImageAttachment))
             return null;
@@ -1021,9 +1104,7 @@ public class DiscordHandler : BackgroundService
         var now = DateTime.UtcNow;
         // A thread is part of its parent channel for spam detection. In particular,
         // continuing an auto-created bug report thread is not cross-channel posting.
-        var contextChannelId = msg.Channel is SocketThreadChannel thread
-            ? thread.ParentChannel.Id
-            : msg.Channel.Id;
+        var contextChannelId = msg.ContextChannelId;
         var post = new ImagePost(msg.Channel.Id, contextChannelId, msg.Id, now);
         var list = _recentImagePosts.GetOrAdd(msg.Author.Id, _ => new List<ImagePost>());
 
@@ -1053,11 +1134,11 @@ public class DiscordHandler : BackgroundService
     }
 
     // #11: One-word spam detection (ported from Node.js bot)
-    private bool CheckOneWordSpam(SocketMessage msg)
+    private bool CheckOneWordSpam(IncomingMessage msg)
     {
         // Only moderate one-word spam on this specific guild
-        var guildUser = msg.Author as SocketGuildUser;
-        if (guildUser == null || guildUser.Guild.Id != 267680588666896385)
+        var guildUser = msg.Author as IGuildUser;
+        if (guildUser == null || guildUser.GuildId != 267680588666896385)
             return false;
 
         var words = msg.Content.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -1069,9 +1150,9 @@ public class DiscordHandler : BackgroundService
             return false;
 
         // Check if user has an exempt role
-        foreach (var role in guildUser.Roles)
+        foreach (var roleId in guildUser.RoleIds)
         {
-            if (ExemptRoles.Contains(role.Id.ToString()))
+            if (ExemptRoles.Contains(roleId.ToString()))
                 return false;
         }
 
@@ -1114,7 +1195,7 @@ public class DiscordHandler : BackgroundService
     }
 
     // #8: Auto-thread creation for support, bug report, and suggestions channels (ported from Node.js bot)
-    private bool CheckAutoThreadCreation(SocketMessage msg)
+    private bool CheckAutoThreadCreation(IncomingMessage msg)
     {
         var channelId = msg.Channel.Id;
 
@@ -1149,7 +1230,7 @@ public class DiscordHandler : BackgroundService
         return false;
     }
 
-    private void CreateAnswerThread(SocketMessage msg, string name, string _reason, Action<IThreadChannel> callback)
+    private void CreateAnswerThread(IncomingMessage msg, string name, string _reason, Action<IThreadChannel> callback)
     {
         if (msg.Channel is not ITextChannel textChannel)
             return;
@@ -1161,7 +1242,7 @@ public class DiscordHandler : BackgroundService
                 var thread = await textChannel.CreateThreadAsync(
                     name,
                     autoArchiveDuration: ThreadArchiveDuration.OneWeek,
-                    message: msg);
+                    message: await msg.GetMessageAsync());
                 callback(thread);
             }
             catch (Exception ex)
@@ -1261,7 +1342,7 @@ public class DiscordHandler : BackgroundService
         return false;
     }
 
-    private async Task HandleInGameChat(SocketMessage msg)
+    private async Task HandleInGameChat(IncomingMessage msg)
     {
         var profile = await persistence.GetDiscordAccountInfo(msg.Author.Id);
         if (profile == default)
