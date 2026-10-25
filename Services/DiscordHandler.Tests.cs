@@ -37,6 +37,15 @@ public class FallbackMessageSourceTests
         Assert.That(FallbackMessageSource.ChooseEvidenceSource(connected, inGuild), Is.EqualTo(expected));
     }
 
+    [TestCase(MessageSource.Fallback, false, false, true)]
+    [TestCase(MessageSource.Main, false, false, false)]
+    [TestCase(MessageSource.Main, true, false, true)]
+    [TestCase(MessageSource.Main, false, true, true)]
+    public void CacheContentIsOnlyTrustedWhenActuallyDelivered(MessageSource source, bool byMain, bool mentionsMain, bool expected)
+    {
+        Assert.That(FallbackMessageSource.IsCacheContentTrusted(source, byMain, mentionsMain), Is.EqualTo(expected));
+    }
+
     [Test]
     public void MainClientEvidenceWithBlankUserMessagesIsNotAvailable()
     {

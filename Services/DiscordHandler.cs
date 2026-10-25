@@ -152,6 +152,57 @@ public class DiscordHandler : BackgroundService
         return await channel.GetMessagesAsync(limit: limit).FlattenAsync();
     }
 
+    /// <summary>Messages read for the message cache; <see cref="Usable"/> only holds messages whose content is trustworthy.</summary>
+    /// <param name="Usable">Messages safe to save/return</param>
+    /// <param name="OldestId">Oldest id of the raw page (for paging), 0 when the page was empty</param>
+    /// <param name="RawCount">Messages Discord returned, before dropping blank ones</param>
+    public record CacheRead(IReadOnlyList<IMessage> Usable, ulong OldestId, int RawCount);
+
+    /// <summary>
+    /// Reads cache-channel messages. TEMPORARY BRIDGE: goes through the fallback client (which has the
+    /// Message Content intent) when it is connected and in the channel's guild, so it is removed together with it.
+    /// Through main, messages that arrive blank (not authored by / mentioning the bot) are dropped, never trusted.
+    /// </summary>
+    public async Task<CacheRead> GetCacheMessages(ulong channelId, ulong beforeMessageId = 0, int limit = 100)
+    {
+        var fallback = fallbackClient;
+        var connected = fallback?.ConnectionState == ConnectionState.Connected;
+        var fallbackChannel = connected ? await fallback!.GetChannelAsync(channelId) as IMessageChannel : null;
+        var source = FallbackMessageSource.ChooseEvidenceSource(connected, fallbackChannel is SocketGuildChannel);
+        if (source == MessageSource.Fallback)
+        {
+            try
+            {
+                return ToCacheRead(await ReadPage(fallbackChannel!, beforeMessageId, limit), source, 0);
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning(e, "Fallback client failed reading cache channel {channelId}; using main client", channelId);
+            }
+        }
+        if (await client!.GetChannelAsync(channelId) is not IMessageChannel channel)
+        {
+            logger.LogError("Channel with ID {id} not found", channelId);
+            return new CacheRead([], 0, 0);
+        }
+        return ToCacheRead(await ReadPage(channel, beforeMessageId, limit), MessageSource.Main, client.CurrentUser?.Id ?? 0);
+    }
+
+    private static async Task<List<IMessage>> ReadPage(IMessageChannel channel, ulong beforeMessageId, int limit)
+    {
+        var page = beforeMessageId != 0
+            ? channel.GetMessagesAsync(beforeMessageId, Direction.Before, limit: limit)
+            : channel.GetMessagesAsync(limit: limit);
+        return (await page.FlattenAsync()).ToList();
+    }
+
+    private static CacheRead ToCacheRead(List<IMessage> raw, MessageSource source, ulong mainBotId)
+    {
+        var usable = raw.Where(m => FallbackMessageSource.IsCacheContentTrusted(source, m.Author.Id == mainBotId,
+            m is IUserMessage um && um.MentionedUserIds.Contains(mainBotId))).ToList();
+        return new CacheRead(usable, raw.Count == 0 ? 0 : raw.Min(m => m.Id), raw.Count);
+    }
+
     public async Task<IMessage?> GetMessageFromChannel(ulong channelId, ulong messageId)
     {
         if (await client!.GetChannelAsync(channelId) is not IMessageChannel channel)
@@ -872,8 +923,12 @@ public class DiscordHandler : BackgroundService
 
         if (MessageController.IsConfiguredCacheChannel(msg.Channel.Id))
         {
-            var mentionedUsers = msg.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
-            await persistence.SaveDiscordMessage(MessageController.MapMessage(msg.Source, mentionedUsers));
+            // a main-client copy without content would overwrite the stored text with a blank
+            if (msg.ContentAvailable)
+            {
+                var mentionedUsers = msg.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
+                await persistence.SaveDiscordMessage(MessageController.MapMessage(msg.Source, mentionedUsers));
+            }
         }
 
         // Detect a compromised account dumping images into multiple channels in fast succession.

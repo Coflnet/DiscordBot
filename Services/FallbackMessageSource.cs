@@ -55,6 +55,13 @@ public static class FallbackMessageSource
     public static bool AllContentAvailable(IEnumerable<(bool AuthoredByMainBot, bool MentionsMainBot)> messages)
         => messages.All(message => message.AuthoredByMainBot || message.MentionsMainBot);
 
+    /// <summary>
+    /// Whether a message read for the message cache carries its real text/attachments. Reads through the
+    /// fallback client always do; reads through main only for its own messages and ones mentioning it.
+    /// </summary>
+    public static bool IsCacheContentTrusted(MessageSource source, bool authoredByMainBot, bool mentionsMainBot)
+        => source == MessageSource.Fallback || authoredByMainBot || mentionsMainBot;
+
     public static DiscordSocketClient CreateClient() => new(new DiscordSocketConfig
     {
         LogLevel = LogSeverity.Info,

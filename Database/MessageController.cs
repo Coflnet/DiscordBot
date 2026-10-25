@@ -46,20 +46,22 @@ public class MessageController : ControllerBase
             return NotFound(new { error = "channel_not_found", message = $"Channel '{channelName}' not found." });
         }
         logger.LogInformation($"Fetching messages for channel '{channelName}' (ID: {channelId}).");
+        // TEMPORARY BRIDGE: reads go through the fallback client (see FallbackMessageSource); remove together with it
         ulong oldest = 0;
         for (int i = 0; i < 500; i++)
         {
-            var messages = (await discordHandler.GetMessagesFromChannel(channelId, oldest)).OfType<RestUserMessage>().Select(MapMessage).ToList();
-            if (messages.Count == 0)
+            var page = await discordHandler.GetCacheMessages(channelId, oldest);
+            if (page.RawCount == 0)
             {
                 logger.LogInformation($"No more messages found in channel '{channelName}' (ID: {channelId}).");
                 return Ok(new { message = $"Messages fetched and saved for channel '{channelName}'. about {i * 100}" });
             }
+            var messages = page.Usable.OfType<RestUserMessage>().Select(MapMessage).ToList();
             foreach (var message in messages)
             {
                 await persistence.SaveDiscordMessage(message);
             }
-            oldest = messages.Min(m => m.MessageId);
+            oldest = page.OldestId;
             logger.LogInformation($"Saved {messages.Count} messages to database for channel '{channelName}' (ID: {channelId}).");
             await Task.Delay(2000); // Wait for 2 seconds before fetching more messages
         }
@@ -83,41 +85,86 @@ public class MessageController : ControllerBase
         }
 
         var stored = (await persistence.GetDiscordMessages(channelId, before)).ToList();
+        var window = MonthWindow.Of(before);
         if (stored.Count > 0)
         {
             // Refresh messages older than 24 hours by fetching fresh versions from Discord.
             var now = DateTime.UtcNow;
-            var refreshed = new List<DiscordMessage>();
-
             var toUpdate = stored.Where(m => now - m.UpdateAt > TimeSpan.FromHours(24) && m.Attachments != null && m.Attachments.Count > 0).ToList();
 
             if (toUpdate.Count > 0)
             {
                 logger.LogInformation($"Refreshing {toUpdate.Count} of {stored.Count} stored messages for channel '{channelName}' (ID: {channelId}) from Discord to revalidate attachments...");
-                var getBefore = stored.Max(m => m.MessageId);
-                var loadesMessages = await discordHandler.GetMessagesFromChannel(channelId, getBefore, stored.Count);
-                var mapped = loadesMessages.OfType<RestUserMessage>().Select(MapMessage);
-                await persistence.SaveDiscordMessages(mapped);
-                return mapped.ToList();
+                var fetched = await FetchMonth(channelId, window);
+                var merged = MergeForCache(stored, fetched);
+                await persistence.SaveDiscordMessages(merged.Where(m => fetched.Any(f => f.MessageId == m.MessageId)));
+                return merged.Where(window.Contains).ToList();
             }
 
             return stored;
         }
 
+        // nothing stored for this month: load only this month, never the whole channel history
+        var month = await FetchMonth(channelId, window);
+        await persistence.SaveDiscordMessages(month);
+        return month;
+    }
 
-        // Assuming GetMessagesAsync is a method that retrieves messages for the given channel ID
-        var messages = (await discordHandler.GetMessagesFromChannel(channelId)).OfType<RestUserMessage>().Select(MapMessage).ToList();
-        while (messages.Count >= 100)
+    /// <summary>Pages backwards from the end of the month until messages are older than its start.</summary>
+    private async Task<List<DiscordMessage>> FetchMonth(ulong channelId, MonthWindow window)
+    {
+        var result = new List<DiscordMessage>();
+        var cursor = window.EndSnowflake;
+        while (true)
         {
-            logger.LogInformation($"Retrieved {messages.Count} messages from channel '{channelName}' (ID: {channelId}).");
-            // batch save to avoid per-message round trips
-            await persistence.SaveDiscordMessages(messages);
-            var lastMessageId = messages.Last().MessageId;
+            var page = await discordHandler.GetCacheMessages(channelId, cursor);
+            if (page.RawCount == 0)
+                break;
+            logger.LogInformation($"Retrieved {page.RawCount} messages from channel (ID: {channelId}).");
+            result.AddRange(page.Usable.OfType<RestUserMessage>().Select(MapMessage).Where(window.Contains));
+            if (page.RawCount < 100 || page.OldestId < window.StartSnowflake)
+                break;
+            cursor = page.OldestId;
             await Task.Delay(2000); // Wait for 2 seconds before fetching more messages
-            messages = (await discordHandler.GetMessagesFromChannel(channelId, lastMessageId)).OfType<RestUserMessage>().Select(MapMessage).ToList();
         }
-        await persistence.SaveDiscordMessages(messages);
-        return messages;
+        return result;
+    }
+
+    /// <summary>
+    /// A UTC calendar month; the snowflakes bound the Discord history that has to be read for it.
+    /// </summary>
+    internal readonly record struct MonthWindow(DateTimeOffset Start, DateTimeOffset End)
+    {
+        public static MonthWindow Of(DateTime time)
+        {
+            var utc = time.Kind == DateTimeKind.Local ? time.ToUniversalTime() : DateTime.SpecifyKind(time, DateTimeKind.Utc);
+            var start = new DateTimeOffset(utc.Year, utc.Month, 1, 0, 0, 0, TimeSpan.Zero);
+            return new MonthWindow(start, start.AddMonths(1));
+        }
+        public ulong StartSnowflake => SnowflakeUtils.ToSnowflake(Start);
+        public ulong EndSnowflake => SnowflakeUtils.ToSnowflake(End);
+        public bool Contains(DiscordMessage m) => m.CreatedAt >= Start && m.CreatedAt < End;
+    }
+
+    /// <summary>
+    /// Combines stored and freshly fetched messages (newest first). A fetched message never replaces
+    /// stored content or attachments with empty ones; stored messages Discord no longer returned are kept.
+    /// </summary>
+    internal static List<DiscordMessage> MergeForCache(IEnumerable<DiscordMessage> stored, IEnumerable<DiscordMessage> fetched)
+    {
+        var byId = stored.GroupBy(m => m.MessageId).ToDictionary(g => g.Key, g => g.First());
+        foreach (var message in fetched)
+        {
+            if (byId.TryGetValue(message.MessageId, out var old))
+            {
+                if (string.IsNullOrWhiteSpace(message.Content) && !string.IsNullOrWhiteSpace(old.Content))
+                    message.Content = old.Content;
+                if ((message.Attachments == null || message.Attachments.Count == 0) && old.Attachments?.Count > 0)
+                    message.Attachments = old.Attachments;
+            }
+            byId[message.MessageId] = message;
+        }
+        return byId.Values.OrderByDescending(m => m.MessageId).ToList();
     }
 
     private static DiscordMessage MapMessage(RestUserMessage m)
