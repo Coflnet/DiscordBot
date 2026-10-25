@@ -196,16 +196,52 @@ public class DiscordHandler : BackgroundService
                 throw new EvidenceDenied("bound_dm_source_mismatch");
             return afterMessageId == 0 ? [directSource] : [];
         }
-        if (guildId != IssueEvidenceService.CoflnetGuildId || channel is not SocketGuildChannel guildChannel
-            || guildChannel.Guild.Id != guildId)
+        if (guildId != IssueEvidenceService.CoflnetGuildId)
+            throw new EvidenceDenied("bound_guild_mismatch");
+
+        // The main application has no Message Content intent, so it only sees text and attachments of
+        // bot-authored/mentioning messages. Read through the fallback client whenever it is connected
+        // and in the guild; if it cannot see the thread, fall back to main and refuse blank content.
+        var fallback = fallbackClient;
+        var source = FallbackMessageSource.ChooseEvidenceSource(
+            fallback?.ConnectionState == ConnectionState.Connected, fallback?.GetGuild(guildId) != null);
+        if (source == MessageSource.Fallback)
+        {
+            try
+            {
+                var viaFallback = await ReadGuildEvidence(fallback!, guildId, channelId, sourceMessageId, afterMessageId, limit);
+                if (viaFallback != null)
+                    return viaFallback;
+                logger.LogWarning("Fallback client cannot read evidence channel {channelId}; using main client", channelId);
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning(e, "Fallback client failed reading evidence channel {channelId}; using main client", channelId);
+            }
+        }
+        var viaMain = await ReadGuildEvidence(client, guildId, channelId, sourceMessageId, afterMessageId, limit)
+            ?? throw new EvidenceDenied("bound_channel_unavailable");
+        var botId = client.CurrentUser.Id;
+        if (!FallbackMessageSource.AllContentAvailable(viaMain.Select(message =>
+                (message.Author.Id == botId, message.MentionedUserIds.Contains(botId)))))
+            throw new EvidenceDenied("message_content_unavailable");
+        return viaMain;
+    }
+
+    /// <summary>Null when <paramref name="reader"/> cannot see the bound channel (e.g. a private thread it is not in).</summary>
+    private static async Task<IReadOnlyList<IMessage>?> ReadGuildEvidence(DiscordSocketClient reader, ulong guildId,
+        ulong channelId, ulong sourceMessageId, ulong afterMessageId, int limit)
+    {
+        if (await reader.GetChannelAsync(channelId) is not IMessageChannel channel)
+            return null;
+        if (channel is not SocketGuildChannel guildChannel || guildChannel.Guild.Id != guildId)
             throw new EvidenceDenied("bound_guild_mismatch");
         var source = await channel.GetMessageAsync(sourceMessageId);
         if (source == null)
             throw new EvidenceDenied("bound_source_message_unavailable");
-
         var sourceIsInThread = channel is SocketThreadChannel;
         SocketThreadChannel? thread = channel as SocketThreadChannel;
-        if (thread == null && await client.GetChannelAsync(sourceMessageId) is SocketThreadChannel attached
+        if (thread == null && await reader.GetChannelAsync(sourceMessageId) is SocketThreadChannel attached
             && IsExactAttachedThread(channelId, sourceMessageId, attached.ParentChannel.Id, attached.Id))
             thread = attached;
 

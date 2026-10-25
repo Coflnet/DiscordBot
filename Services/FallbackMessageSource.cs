@@ -44,6 +44,17 @@ public static class FallbackMessageSource
     public static bool IsContentAvailable(MessageSource origin, bool isDm, bool mentionsMainBot)
         => origin == MessageSource.Fallback || isDm || mentionsMainBot;
 
+    /// <summary>Evidence reads need message content, so use the fallback client whenever it can serve the guild.</summary>
+    public static MessageSource ChooseEvidenceSource(bool fallbackConnected, bool fallbackInGuild)
+        => fallbackConnected && fallbackInGuild ? MessageSource.Fallback : MessageSource.Main;
+
+    /// <summary>
+    /// True when every message read through the main client really carries its text/attachments
+    /// (authored by the main bot or mentioning it); otherwise blank messages must not be passed off as complete.
+    /// </summary>
+    public static bool AllContentAvailable(IEnumerable<(bool AuthoredByMainBot, bool MentionsMainBot)> messages)
+        => messages.All(message => message.AuthoredByMainBot || message.MentionsMainBot);
+
     public static DiscordSocketClient CreateClient() => new(new DiscordSocketConfig
     {
         LogLevel = LogSeverity.Info,

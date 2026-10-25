@@ -28,6 +28,24 @@ public class FallbackMessageSourceTests
             Discord.GatewayIntents.Guilds | Discord.GatewayIntents.GuildMessages | Discord.GatewayIntents.MessageContent));
     }
 
+    [TestCase(true, true, MessageSource.Fallback)]
+    [TestCase(true, false, MessageSource.Main)]
+    [TestCase(false, true, MessageSource.Main)]
+    [TestCase(false, false, MessageSource.Main)]
+    public void EvidenceReadPrefersFallbackWhenConnectedAndInGuild(bool connected, bool inGuild, MessageSource expected)
+    {
+        Assert.That(FallbackMessageSource.ChooseEvidenceSource(connected, inGuild), Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void MainClientEvidenceWithBlankUserMessagesIsNotAvailable()
+    {
+        // bot-authored and bot-mentioning messages carry content via main; ordinary user messages do not
+        Assert.That(FallbackMessageSource.AllContentAvailable([(true, false), (false, true)]), Is.True);
+        Assert.That(FallbackMessageSource.AllContentAvailable([(true, false), (false, false)]), Is.False);
+        Assert.That(FallbackMessageSource.AllContentAvailable([]), Is.True);
+    }
+
     [TestCase(null, false)]
     [TestCase("", false)]
     [TestCase("   ", false)]
