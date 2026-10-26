@@ -11,6 +11,9 @@ using Coflnet.Sky.ModCommands.Client.Client;
 using Coflnet.Core.Tracing;
 using Coflnet.Security.OpenBao;
 using Coflnet.DiscordBot.Phone;
+using Coflnet.DiscordBot.Telemetry;
+using OpenTelemetry;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -64,6 +67,15 @@ builder.Services.AddSingleton<Octokit.GraphQL.Connection>(di =>
     return connection;
 });
 builder.Services.AddCoflnetCore();
+// Core drops the console logger once logs go to OTLP; keep it so `kubectl logs` still works if Loki ingestion fails.
+if (!string.IsNullOrEmpty(builder.Configuration["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] ?? builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"])
+    && builder.Configuration.GetValue<bool?>("DEV_LOGGING") != true)
+    builder.Services.AddLogging(logging => logging.AddSimpleConsole(options => options.TimestampFormat = "HH:mm:ss "));
+// Core only exports the sources it knows (ASP.NET, HttpClient, ...); without AddSource no
+// interaction span is ever exported. Runs after Core's setup so the sampler below wins.
+builder.Services.ConfigureOpenTelemetryTracerProvider(tracing => tracing
+    .AddSource(BotTelemetry.SourceName)
+    .SetSampler(new InteractionSampler(new TracingServiceExtention.RationOrTimeBasedSampler(0.03, 60))));
 builder.Services.AddControllers();
 builder.Services.AddSingleton<ISearchApi>(di => new SearchApi(builder.Configuration["API_BASE_URL"]));
 builder.Services.AddSingleton<IConnectionMultiplexer>(s => ConnectionMultiplexer.Connect(builder.Configuration["CHAT_REDIS_HOST"]));

@@ -17,6 +17,8 @@ using Discord.Audio;
 using Discord.WebSocket;
 using Newtonsoft.Json;
 using Coflnet.DiscordBot.Phone;
+using Coflnet.DiscordBot.Telemetry;
+using System.Diagnostics;
 
 public class DiscordHandler : BackgroundService
 {
@@ -121,6 +123,7 @@ public class DiscordHandler : BackgroundService
         });
         interactionService = new InteractionService(client.Rest);
         interactionService.Log += Log;
+        interactionService.InteractionExecuted += OnInteractionExecuted;
         client.Log += Log;
         client.Ready += Init;
         client.Disconnected += OnDisconnected;
@@ -831,6 +834,10 @@ public class DiscordHandler : BackgroundService
         return new IncomingMessage(msg, origin, author, channel, guild, contentAvailable: true);
     }
 
+    // Commands run detached from OnInteractionCreated (RunMode.Async), so the span is closed
+    // by InteractionService.InteractionExecuted which carries the real result.
+    private readonly ConcurrentDictionary<ulong, (Activity Activity, InteractionInfo Info)> activeInteractions = new();
+
     private async Task OnInteractionCreated(SocketInteraction interaction)
     {
         await EnsureInteractionServiceInitialized();
@@ -839,9 +846,52 @@ public class DiscordHandler : BackgroundService
             return;
         }
 
-        var scope = _serviceProvider.CreateScope();
-        var ctx = new SocketInteractionContext(client, interaction);
-        await interactionService.ExecuteCommandAsync(ctx, scope.ServiceProvider);
+        var info = BotTelemetry.Describe(interaction);
+        var activity = BotTelemetry.StartInteraction(info);
+        if (activity != null)
+            activeInteractions[interaction.Id] = (activity, info);
+        try
+        {
+            var scope = _serviceProvider.CreateScope();
+            var ctx = new SocketInteractionContext(client, interaction);
+            var result = await interactionService.ExecuteCommandAsync(ctx, scope.ServiceProvider);
+            if (!result.IsSuccess)
+                FinishInteraction(interaction.Id, info, result);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Interaction {Kind} {Command} by {UserId} threw before it could run", info.Kind, info.Name, info.UserId);
+            if (activeInteractions.TryRemove(interaction.Id, out var entry))
+                BotTelemetry.Complete(entry.Activity, new InteractionOutcome(false, "Exception", ex.Message), ex);
+            throw;
+        }
+    }
+
+    private Task OnInteractionExecuted(ICommandInfo? command, IInteractionContext context, global::Discord.Interactions.IResult result)
+    {
+        var interaction = context.Interaction;
+        var info = activeInteractions.TryGetValue(interaction.Id, out var entry)
+            ? entry.Info
+            : new InteractionInfo(interaction.Id, "interaction", command?.Name ?? "unknown", interaction.User.Id, interaction.GuildId, interaction.ChannelId, []);
+        FinishInteraction(interaction.Id, info, result);
+        return Task.CompletedTask;
+    }
+
+    private void FinishInteraction(ulong interactionId, InteractionInfo info, global::Discord.Interactions.IResult result)
+    {
+        var outcome = BotTelemetry.Describe(result);
+        if (!outcome.Success)
+        {
+            // precondition failures (missing role, ...) used to vanish silently
+            logger.LogWarning("Interaction {Kind} {Command} by {UserId} in guild {GuildId} channel {ChannelId} failed: {Error} {Reason}",
+                info.Kind, info.Name, info.UserId, info.GuildId, info.ChannelId, outcome.Status, outcome.Reason);
+        }
+        else
+        {
+            logger.LogInformation("Interaction {Kind} {Command} by {UserId} completed", info.Kind, info.Name, info.UserId);
+        }
+        if (activeInteractions.TryRemove(interactionId, out var entry))
+            BotTelemetry.Complete(entry.Activity, outcome, result is ExecuteResult executeResult ? executeResult.Exception : null);
     }
 
     private async Task OnJoinedGuild(SocketGuild guild)

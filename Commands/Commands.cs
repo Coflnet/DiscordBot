@@ -11,6 +11,7 @@ using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
 using Octokit.GraphQL;
+using Coflnet.DiscordBot.Telemetry;
 using RestSharp;
 
 public class Commands : InteractionModuleBase
@@ -314,14 +315,18 @@ public class Commands : InteractionModuleBase
             var userId = await FindUserId(user);
             if (userId == null)
             {
+                logger.LogWarning("Revert aborted, no user resolved for input {user} (transaction {transactionId})", user, transactionId);
                 return;
             }
             if (!int.TryParse(transactionId, out var parsedId))
             {
+                logger.LogWarning("Revert aborted, invalid transaction id {transactionId} for user {userId}", transactionId, userId);
                 await FollowupAsync("Invalid transaction id");
                 return;
             }
+            logger.LogInformation("Reverting transaction {transactionId} for payments user {userId}", parsedId, userId);
             var transaction = await userApi.UserUserIdTransactionIdDeleteAsync(userId.ToString(), parsedId);
+            logger.LogInformation("Reverted transaction {transactionId} for payments user {userId}", parsedId, userId);
             await FollowupAsync("", ephemeral: true, embed: new EmbedBuilder()
                 .WithTitle("Reverted " + transactionId)
                 .WithDescription($"Reverted transaction {transactionId} for {userId}, changed {transaction.Amount} {transaction.Id} - {transaction.Reference}")
@@ -331,6 +336,7 @@ public class Commands : InteractionModuleBase
         catch (Exception ex)
         {
             logger.LogError(ex, "Error executing revert command for {user}", user);
+            System.Diagnostics.Activity.Current.RecordException(ex);
             try { await FollowupAsync("An error occurred while reverting transaction", ephemeral: true); } catch { }
         }
     }
@@ -352,6 +358,11 @@ public class Commands : InteractionModuleBase
         if (!ulong.TryParse(user.Replace("#", ""), out var userId))
         {
             userId = await GetUserIdFromMcName(user);
+            if (userId == 0)
+            {
+                // GetUserIdFromMcName already told the invoker and logged why
+                return null;
+            }
         }
         else if (user.Contains("#"))
         {
@@ -363,10 +374,15 @@ public class Commands : InteractionModuleBase
             var discordInfo = await persistence.GetDiscordAccountInfo(userId);
             if (discordInfo?.MinecraftName == null)
             {
+                logger.LogWarning("No verified minecraft account stored for discord id {discordId}", userId);
                 await FollowupAsync("No user found with that id (or not verified)");
                 return null;
             }
             userId = await GetUserIdFromMcName(discordInfo.MinecraftName);
+            if (userId == 0)
+            {
+                return null;
+            }
         }
         return userId.ToString();
     }
@@ -378,12 +394,14 @@ public class Commands : InteractionModuleBase
         var response = await restClient.ExecuteAsync(request);
         if (response.StatusCode != System.Net.HttpStatusCode.OK)
         {
+            logger.LogWarning("Indexer user lookup for email returned {statusCode} ({errorMessage})", (int)response.StatusCode, response.ErrorMessage);
             await FollowupAsync("No user found with that email");
             return null;
         }
         var userInfo = Newtonsoft.Json.JsonConvert.DeserializeObject<UserInfo>(response.Content);
         if (userInfo == null)
         {
+            logger.LogWarning("Indexer user lookup for email returned an empty body");
             await FollowupAsync("No user found with that email");
             return null;
         }
@@ -394,16 +412,36 @@ public class Commands : InteractionModuleBase
         public int Id { get; set; }
     }
 
+    /// <summary>Returns the discord/external user id for a minecraft name, 0 when none could be found (invoker is told).</summary>
     private async Task<ulong> GetUserIdFromMcName(string user)
     {
-        var uuid = (await searchApi.ApiSearchPlayerPlayerNameGetAsync(user)).First().Uuid;
+        var uuid = FirstPlayerUuid(await searchApi.ApiSearchPlayerPlayerNameGetAsync(user));
+        if (uuid == null)
+        {
+            logger.LogWarning("Search returned no player for name {playerName}", user);
+            await FollowupAsync("No player found with that name");
+            return 0;
+        }
         var connect = await connectApi.ConnectMinecraftMcUuidGetAsync(uuid);
         if (connect == null || string.IsNullOrEmpty(connect.ExternalId))
         {
+            logger.LogWarning("Player {playerName} ({uuid}) has no linked account", user, uuid);
             await FollowupAsync("No user found with that name");
             return 0;
         }
-        return ulong.Parse(connect.ExternalId);
+        if (!ulong.TryParse(connect.ExternalId, out var externalId))
+        {
+            logger.LogWarning("Linked account of {uuid} has a non numeric external id", uuid);
+            await FollowupAsync("The linked account of that player has an unexpected id");
+            return 0;
+        }
+        return externalId;
+    }
+
+    internal static string? FirstPlayerUuid(IEnumerable<Coflnet.Sky.Api.Client.Model.PlayerResult>? results)
+    {
+        var uuid = results?.FirstOrDefault()?.Uuid;
+        return string.IsNullOrEmpty(uuid) ? null : uuid;
     }
 
     private bool DoesNotMatchExecutor(ProfileClient.HypixelProfile profile)
