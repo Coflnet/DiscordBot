@@ -874,7 +874,29 @@ public class DiscordHandler : BackgroundService
             ? entry.Info
             : new InteractionInfo(interaction.Id, "interaction", command?.Name ?? "unknown", interaction.User.Id, interaction.GuildId, interaction.ChannelId, []);
         FinishInteraction(interaction.Id, info, result);
+        if (!result.IsSuccess && result is ExecuteResult { Exception: not null })
+            return NotifyUserOfFailure(interaction, info);
         return Task.CompletedTask;
+    }
+
+    private async Task NotifyUserOfFailure(IDiscordInteraction interaction, InteractionInfo info)
+    {
+        try
+        {
+            var embed = new EmbedBuilder()
+                .WithTitle("Error")
+                .WithDescription("Something went wrong while running this command, please try again later")
+                .WithColor(Color.Red)
+                .Build();
+            if (interaction.HasResponded)
+                await interaction.ModifyOriginalResponseAsync(msg => msg.Embed = embed);
+            else
+                await interaction.RespondAsync(embed: embed, ephemeral: true);
+        }
+        catch (Exception e)
+        {
+            logger.LogWarning(e, "Could not tell user {UserId} that {Command} failed", info.UserId, info.Name);
+        }
     }
 
     private void FinishInteraction(ulong interactionId, InteractionInfo info, global::Discord.Interactions.IResult result)

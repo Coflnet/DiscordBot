@@ -70,17 +70,79 @@ public class Commands : InteractionModuleBase
     public async Task UpdateMcUser([Summary("name", "Minecraft user name"), Autocomplete(typeof(McNameAutocompleteHandler))] string userName)
     {
         await DeferAsync(ephemeral: true);
-        var user = (await searchApi.ApiSearchPlayerPlayerNameGetAsync(userName)).First();
+        try
+        {
+            await LinkMcUser(userName);
+        }
+        catch (MinecraftAccountNotVerifiedException e)
+        {
+            await ShowError(
+                $"""
+                The Minecraft account `{e.MinecraftName}` isn't verified with Coflnet yet.
+                To verify it:
+
+                1. Install and launch the SkyCofl mod
+                2. Join Hypixel
+                3. Run `/cofl verify` in the in-game chat and follow the steps
+                4. Rerun `/update-mc-user`
+                """);
+        }
+        catch (ProfileLookupException e)
+        {
+            logger.LogError(e, "Hypixel profile lookup failed for {name}", userName);
+            await ShowError("Couldn't reach the Hypixel profile service, please try again in a few minutes");
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Failed to link minecraft user {name} for {discordId}", userName, Context.Interaction.User.Id);
+            await ShowError("Something went wrong while linking, please try again later");
+        }
+    }
+
+    private sealed class ProfileLookupException(Exception inner) : Exception("Profile lookup failed", inner);
+
+    private async Task<ProfileClient.HypixelProfile> LookupProfile(string uuid, bool forceRefresh = false)
+    {
+        try
+        {
+            return await profileClient.GetLookup(uuid, forceRefresh);
+        }
+        catch (Exception e)
+        {
+            throw new ProfileLookupException(e);
+        }
+    }
+
+    private Task ShowError(string description)
+    {
+        return ModifyOriginalResponseAsync(msg =>
+        {
+            msg.Embed = new EmbedBuilder()
+                .WithTitle("Error")
+                .WithDescription(description)
+                .WithColor(Color.Red)
+                .Build();
+        });
+    }
+
+    private async Task LinkMcUser(string userName)
+    {
+        var user = (await searchApi.ApiSearchPlayerPlayerNameGetAsync(userName)).FirstOrDefault();
+        if (user == null)
+        {
+            await ShowError($"No Minecraft player named `{userName}` found");
+            return;
+        }
         await FollowupAsync("", embed: new EmbedBuilder()
             .WithTitle("Checking ownership")
             .WithDescription($"Updating Minecraft user `{user.Name}` with UUID `{user.Uuid}`")
             .WithColor(Color.Blue)
             .Build(), ephemeral: true);
-        var profile = await profileClient.GetLookup(user.Uuid);
+        var profile = await LookupProfile(user.Uuid);
 
         if (DoesNotMatchExecutor(profile))
         {
-            profile = await profileClient.GetLookup(user.Uuid, true);
+            profile = await LookupProfile(user.Uuid, true);
         }
         if (DoesNotMatchExecutor(profile))
         {

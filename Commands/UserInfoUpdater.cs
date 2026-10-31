@@ -8,6 +8,17 @@ using Discord.WebSocket;
 using Microsoft.Extensions.Configuration;
 using System.Linq;
 
+public class MinecraftAccountNotVerifiedException : Exception
+{
+    public string MinecraftName { get; }
+
+    public MinecraftAccountNotVerifiedException(string minecraftName)
+        : base($"Minecraft account {minecraftName} is not verified with a Coflnet account")
+    {
+        MinecraftName = minecraftName;
+    }
+}
+
 public class UserInfoUpdater
 {
 
@@ -44,6 +55,8 @@ public class UserInfoUpdater
         var ignName = user.Name;
         existing.MinecraftName = ignName;
         var connect = await connectApi.ConnectMinecraftMcUuidGetAsync(user.Uuid);
+        if (connect == null || string.IsNullOrEmpty(connect.ExternalId))
+            throw new MinecraftAccountNotVerifiedException(ignName);
         existing.UserId = connect.ExternalId;
         await UpdatePremiumTierAndSave(existing);
         return ignName;
@@ -89,7 +102,14 @@ public class UserInfoUpdater
                 existing = new DiscordAccountInfo();
             }
             logger.LogInformation("Updating user details of {uuid} {discordId}", item.Value.Item2, id);
-            await UpdateuserDetails(id.Id, new PlayerResult { Name = item.Value.Item2, Uuid = item.Value.uuid.ToString("n") }, existing);
+            try
+            {
+                await UpdateuserDetails(id.Id, new PlayerResult { Name = item.Value.Item2, Uuid = item.Value.uuid.ToString("n") }, existing);
+            }
+            catch (MinecraftAccountNotVerifiedException e)
+            {
+                logger.LogInformation("Skipping {name}, minecraft account is not verified with Coflnet", e.MinecraftName);
+            }
         }
     }
 
@@ -135,6 +155,13 @@ public class UserInfoUpdater
         if (member.Roles.Any(r => r.Id == FlipperRoleId))
             return;
         logger.LogInformation("Assigning flipper role to user {discordUserId}", discordUserId);
-        await member.AddRoleAsync(role);
+        try
+        {
+            await member.AddRoleAsync(role);
+        }
+        catch (Exception e)
+        {
+            logger.LogWarning(e, "Failed to assign flipper role to user {discordUserId}", discordUserId);
+        }
     }
 }
