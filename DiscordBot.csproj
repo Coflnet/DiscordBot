@@ -12,7 +12,7 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);Client\**\*</DefaultItemExcludes>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Coflnet.Core" Version="0.7.3" />
+    <PackageReference Include="Coflnet.Core" Version="0.7.5" />
     <PackageReference Include="Coflnet.Payments.Client" Version="0.29.0" />
     <PackageReference Include="Coflnet.Sky.Api.Client" Version="0.8.0" />
     <PackageReference Include="Coflnet.Sky.Chat.Client" Version="2.0.1" />
@@ -26,7 +26,7 @@
     <PackageReference Include="Octokit.GraphQL" Version="0.4.0-beta" />
     <PackageReference Include="QuestPDF" Version="2026.9.1" />
     <PackageReference Include="StackExchange.Redis" Version="3.0.0" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.2" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.3.1" />
     <PackageReference Include="Twilio" Version="7.14.9" />
   </ItemGroup>
 
