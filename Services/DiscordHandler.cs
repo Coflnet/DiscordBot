@@ -58,6 +58,20 @@ public class DiscordHandler : BackgroundService
 
     internal static bool IsNitroScamLink(string content) => NitroRegex.IsMatch(content);
 
+    // Scam replies like "ASK here Please 0P£N-A-TlCk£T > http://discordapp.com/invite/complaint"
+    private static readonly Regex InviteScamRegex = new(
+        @"\.com/invite/complaint(?![\w-])",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly TimeSpan InviteScamMaxMemberAge = TimeSpan.FromDays(2);
+
+    internal static bool ShouldBanInviteScam(string? content, DateTimeOffset? joinedAt, DateTimeOffset now)
+    {
+        if (string.IsNullOrEmpty(content) || joinedAt == null)
+            return false;
+        return now - joinedAt.Value < InviteScamMaxMemberAge && InviteScamRegex.IsMatch(content);
+    }
+
     // One-word spam tracking per user (ported from Node.js bot)
     private readonly ConcurrentDictionary<ulong, DateTime> _oneWordMessageTimes = new();
 
@@ -993,6 +1007,9 @@ public class DiscordHandler : BackgroundService
         if (msg.Author.IsBot || msg.Author.IsWebhook) return;
         var channelName = msg.ChannelName;
 
+        if (await HandleInviteScam(msg))
+            return;
+
         if (MessageController.IsConfiguredCacheChannel(msg.Channel.Id))
         {
             // a main-client copy without content would overwrite the stored text with a blank
@@ -1293,6 +1310,79 @@ public class DiscordHandler : BackgroundService
         catch (Exception ex)
         {
             logger.LogDebug(ex, "Failed to delete message {messageId} in channel {channelId}", messageId, channelId);
+        }
+    }
+
+    private readonly InviteScamGuard inviteScamGuard = new();
+
+    internal static bool IsInviteScamGuild(ulong guildId) => guildId == IssueEvidenceService.CoflnetGuildId;
+
+    /// <summary>
+    /// Bans freshly joined accounts posting the ".com/invite/complaint" scam link.
+    /// </summary>
+    /// <returns>true if the message was handled (and processing should stop).</returns>
+    private async Task<bool> HandleInviteScam(IncomingMessage msg)
+    {
+        if (!msg.ContentAvailable
+            || msg.Guild is not SocketGuild guild
+            || !IsInviteScamGuild(guild.Id)
+            || !InviteScamRegex.IsMatch(msg.Content))
+            return false;
+
+        var userId = msg.Author.Id;
+        if (!inviteScamGuard.TryEnter(guild.Id, userId, DateTimeOffset.UtcNow))
+            return true;
+
+        var member = await TryGetFreshMember(guild.Id, userId);
+        if (member == null
+            || IsProtectedMember(guild.OwnerId, member.Id, member.RoleIds, member.GuildPermissions)
+            || !ShouldBanInviteScam(msg.Content, member.JoinedAt, DateTimeOffset.UtcNow))
+        {
+            inviteScamGuard.Clear(guild.Id, userId);
+            return false;
+        }
+
+        await BanInviteScammer(msg, member);
+        return true;
+    }
+
+    internal static bool IsProtectedMember(ulong ownerId, ulong userId, IEnumerable<ulong> roleIds, GuildPermissions perms)
+    {
+        if (ownerId == userId || roleIds.Any(r => ExemptRoles.Contains(r.ToString())))
+            return true;
+        return perms.Administrator || perms.ManageGuild || perms.ManageMessages || perms.BanMembers
+            || perms.KickMembers || perms.ModerateMembers || perms.ManageRoles || perms.ManageChannels;
+    }
+
+    // Cached members can be stale or partial (old join date after a rejoin, missing roles), so decide on fresh data only.
+    private async Task<IGuildUser?> TryGetFreshMember(ulong guildId, ulong userId)
+    {
+        try
+        {
+            var member = await client!.Rest.GetGuildUserAsync(guildId, userId);
+            if (member == null)
+                logger.LogWarning("Fresh member lookup for user {userId} in guild {guildId} returned nothing, not banning", userId, guildId);
+            return member;
+        }
+        catch (Exception e)
+        {
+            logger.LogWarning(e, "Could not look up user {userId} in guild {guildId}, not banning", userId, guildId);
+            return null;
+        }
+    }
+
+    private async Task BanInviteScammer(IncomingMessage msg, IGuildUser user)
+    {
+        try
+        {
+            await user.BanAsync(1, "Auto-ban: account joined less than 2 days ago and posted a .com/invite/complaint scam link");
+            logger.LogInformation("Banned user {userId} in guild {guildId} for the invite/complaint scam", user.Id, user.GuildId);
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Failed to ban invite scam user {userId} in guild {guildId}", user.Id, user.GuildId);
+            inviteScamGuard.Clear(user.GuildId, user.Id);
+            await TryDeleteMessage(msg.Channel.Id, msg.Id);
         }
     }
 
