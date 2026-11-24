@@ -97,10 +97,9 @@ public class DiscordHandler : BackgroundService
     private ulong _supportChannelId;
     private ulong _bugReportChannelId;
 
-    // MessageContent was revoked for this application; content comes from the temporary FallbackMessageSource.
-    internal const GatewayIntents MainIntents = GatewayIntents.AllUnprivileged & ~GatewayIntents.GuildScheduledEvents;
-
-    private DiscordSocketClient? fallbackClient;
+    // GuildScheduledEvents is in AllUnprivileged but we don't handle those events (Discord.Net warns about it), so drop it.
+    // MessageContent is privileged and must be enabled for the application in the developer portal.
+    internal const GatewayIntents MainIntents = (GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent) & ~GatewayIntents.GuildScheduledEvents;
 
     public DiscordHandler(ILogger<DiscordHandler> logger, IConfiguration config, IServiceProvider serviceProvider, ChatService chatService, Persistence persistence, UserInfoUpdater userInfoUpdater, FaqService faqService)
     {
@@ -125,8 +124,6 @@ public class DiscordHandler : BackgroundService
         client = new DiscordSocketClient(new DiscordSocketConfig
         {
             LogLevel = LogSeverity.Debug,
-            // GuildScheduledEvents is in AllUnprivileged but we don't handle those events
-            // (Discord.Net warns about it), so drop it.
             GatewayIntents = MainIntents,
             // AlwaysDownloadUsers triggers a member download across every guild on READY,
             // which requires the privileged GuildMembers intent (not enabled) so it throws,
@@ -141,13 +138,12 @@ public class DiscordHandler : BackgroundService
         client.Log += Log;
         client.Ready += Init;
         client.Disconnected += OnDisconnected;
-        client.MessageReceived += msg => OnMessageReceived(MessageSource.Main, msg);
+        client.MessageReceived += msg => OnMessageReceived(msg);
         client.InteractionCreated += OnInteractionCreated;
         client.JoinedGuild += OnJoinedGuild;
         await client!.LoginAsync(TokenType.Bot, _config["BotToken"]);
         // set intent to receive message
         await client.StartAsync();
-        await StartFallbackSource();
         var sub = await chatService.Subscribe(OnMcChatMessage);
         logger.LogInformation("Discord bot starting, waiting for gateway to become ready (not connected yet)");
 
@@ -169,55 +165,24 @@ public class DiscordHandler : BackgroundService
         return await channel.GetMessagesAsync(limit: limit).FlattenAsync();
     }
 
-    /// <summary>Messages read for the message cache; <see cref="Usable"/> only holds messages whose content is trustworthy.</summary>
-    /// <param name="Usable">Messages safe to save/return</param>
-    /// <param name="OldestId">Oldest id of the raw page (for paging), 0 when the page was empty</param>
-    /// <param name="RawCount">Messages Discord returned, before dropping blank ones</param>
-    public record CacheRead(IReadOnlyList<IMessage> Usable, ulong OldestId, int RawCount);
+    /// <summary>Messages read for the message cache.</summary>
+    /// <param name="Messages">Messages of the page</param>
+    /// <param name="OldestId">Oldest id of the page (for paging), 0 when the page was empty</param>
+    public record CacheRead(IReadOnlyList<IMessage> Messages, ulong OldestId);
 
-    /// <summary>
-    /// Reads cache-channel messages. TEMPORARY BRIDGE: goes through the fallback client (which has the
-    /// Message Content intent) when it is connected and in the channel's guild, so it is removed together with it.
-    /// Through main, messages that arrive blank (not authored by / mentioning the bot) are dropped, never trusted.
-    /// </summary>
+    /// <summary>Reads one page of cache-channel messages through the main client.</summary>
     public async Task<CacheRead> GetCacheMessages(ulong channelId, ulong beforeMessageId = 0, int limit = 100)
     {
-        var fallback = fallbackClient;
-        var connected = fallback?.ConnectionState == ConnectionState.Connected;
-        var fallbackChannel = connected ? await fallback!.GetChannelAsync(channelId) as IMessageChannel : null;
-        var source = FallbackMessageSource.ChooseEvidenceSource(connected, fallbackChannel is SocketGuildChannel);
-        if (source == MessageSource.Fallback)
-        {
-            try
-            {
-                return ToCacheRead(await ReadPage(fallbackChannel!, beforeMessageId, limit), source, 0);
-            }
-            catch (Exception e)
-            {
-                logger.LogWarning(e, "Fallback client failed reading cache channel {channelId}; using main client", channelId);
-            }
-        }
         if (await client!.GetChannelAsync(channelId) is not IMessageChannel channel)
         {
             logger.LogError("Channel with ID {id} not found", channelId);
-            return new CacheRead([], 0, 0);
+            return new CacheRead([], 0);
         }
-        return ToCacheRead(await ReadPage(channel, beforeMessageId, limit), MessageSource.Main, client.CurrentUser?.Id ?? 0);
-    }
-
-    private static async Task<List<IMessage>> ReadPage(IMessageChannel channel, ulong beforeMessageId, int limit)
-    {
         var page = beforeMessageId != 0
             ? channel.GetMessagesAsync(beforeMessageId, Direction.Before, limit: limit)
             : channel.GetMessagesAsync(limit: limit);
-        return (await page.FlattenAsync()).ToList();
-    }
-
-    private static CacheRead ToCacheRead(List<IMessage> raw, MessageSource source, ulong mainBotId)
-    {
-        var usable = raw.Where(m => FallbackMessageSource.IsCacheContentTrusted(source, m.Author.Id == mainBotId,
-            m is IUserMessage um && um.MentionedUserIds.Contains(mainBotId))).ToList();
-        return new CacheRead(usable, raw.Count == 0 ? 0 : raw.Min(m => m.Id), raw.Count);
+        var messages = (await page.FlattenAsync()).ToList();
+        return new CacheRead(messages, messages.Count == 0 ? 0 : messages.Min(m => m.Id));
     }
 
     public async Task<IMessage?> GetMessageFromChannel(ulong channelId, ulong messageId)
@@ -267,33 +232,8 @@ public class DiscordHandler : BackgroundService
         if (guildId != IssueEvidenceService.CoflnetGuildId)
             throw new EvidenceDenied("bound_guild_mismatch");
 
-        // The main application has no Message Content intent, so it only sees text and attachments of
-        // bot-authored/mentioning messages. Read through the fallback client whenever it is connected
-        // and in the guild; if it cannot see the thread, fall back to main and refuse blank content.
-        var fallback = fallbackClient;
-        var source = FallbackMessageSource.ChooseEvidenceSource(
-            fallback?.ConnectionState == ConnectionState.Connected, fallback?.GetGuild(guildId) != null);
-        if (source == MessageSource.Fallback)
-        {
-            try
-            {
-                var viaFallback = await ReadGuildEvidence(fallback!, guildId, channelId, sourceMessageId, afterMessageId, limit);
-                if (viaFallback != null)
-                    return viaFallback;
-                logger.LogWarning("Fallback client cannot read evidence channel {channelId}; using main client", channelId);
-            }
-            catch (Exception e)
-            {
-                logger.LogWarning(e, "Fallback client failed reading evidence channel {channelId}; using main client", channelId);
-            }
-        }
-        var viaMain = await ReadGuildEvidence(client, guildId, channelId, sourceMessageId, afterMessageId, limit)
+        return await ReadGuildEvidence(client, guildId, channelId, sourceMessageId, afterMessageId, limit)
             ?? throw new EvidenceDenied("bound_channel_unavailable");
-        var botId = client.CurrentUser.Id;
-        if (!FallbackMessageSource.AllContentAvailable(viaMain.Select(message =>
-                (message.Author.Id == botId, message.MentionedUserIds.Contains(botId)))))
-            throw new EvidenceDenied("message_content_unavailable");
-        return viaMain;
     }
 
     /// <summary>Null when <paramref name="reader"/> cannot see the bound channel (e.g. a private thread it is not in).</summary>
@@ -757,95 +697,18 @@ public class DiscordHandler : BackgroundService
         }
     }
 
-    // TEMPORARY BRIDGE (see FallbackMessageSource): second read-only connection supplying message content.
-    private async Task StartFallbackSource()
-    {
-        var token = _config[FallbackMessageSource.TokenConfigKey];
-        if (!FallbackMessageSource.IsEnabled(token))
-        {
-            logger.LogWarning("Fallback message listener is NOT active ({key} not set): message content will be empty for guild messages", FallbackMessageSource.TokenConfigKey);
-            return;
-        }
-        try
-        {
-            var fallback = FallbackMessageSource.CreateClient();
-            fallback.Log += Log;
-            fallback.MessageReceived += msg => OnMessageReceived(MessageSource.Fallback, msg);
-            await fallback.LoginAsync(TokenType.Bot, token);
-            await fallback.StartAsync();
-            fallbackClient = fallback;
-            logger.LogInformation("Fallback message listener is ACTIVE (second gateway connection supplying message content)");
-        }
-        catch (Exception e)
-        {
-            logger.LogError(e, "Fallback message listener failed to start, continuing with the main client only");
-            fallbackClient?.Dispose();
-            fallbackClient = null;
-        }
-    }
-
-    public override async Task StopAsync(CancellationToken cancellationToken)
-    {
-        var fallback = fallbackClient;
-        fallbackClient = null;
-        if (fallback != null)
-        {
-            try
-            {
-                await fallback.StopAsync();
-                fallback.Dispose();
-            }
-            catch (Exception e)
-            {
-                logger.LogWarning(e, "Error stopping fallback message listener");
-            }
-        }
-        await base.StopAsync(cancellationToken);
-    }
-
-    private async Task OnMessageReceived(MessageSource origin, SocketMessage msg)
+    private async Task OnMessageReceived(SocketMessage msg)
     {
         try
         {
             if (msg.Author.IsBot || msg.Author.IsWebhook) return;
-            var incoming = await ResolveIncoming(origin, msg);
-            if (incoming == null) return;
-            await OnMessage(incoming);
+            var guild = (msg.Channel as SocketGuildChannel)?.Guild;
+            await OnMessage(new IncomingMessage(msg, msg.Author, msg.Channel, guild));
         }
         catch (System.Exception e)
         {
             logger.LogError(e, "Error handling message");
         }
-    }
-
-    /// <summary>Applies the dedupe rules and maps the message onto main-client objects.</summary>
-    private async Task<IncomingMessage?> ResolveIncoming(MessageSource origin, SocketMessage msg)
-    {
-        if (client == null)
-            return null;
-        var sourceGuild = (msg.Channel as SocketGuildChannel)?.Guild;
-        var fallbackInGuild = sourceGuild != null && fallbackClient?.GetGuild(sourceGuild.Id) != null;
-        var mainInGuild = sourceGuild != null && client.GetGuild(sourceGuild.Id) != null;
-        if (!FallbackMessageSource.ShouldProcess(origin, sourceGuild?.Id, fallbackInGuild, mainInGuild))
-            return null;
-        if (origin == MessageSource.Main)
-        {
-            var mentionsMainBot = client.CurrentUser != null && msg.MentionedUsers.Any(u => u.Id == client.CurrentUser.Id);
-            var contentAvailable = FallbackMessageSource.IsContentAvailable(origin, sourceGuild == null, mentionsMainBot);
-            return new IncomingMessage(msg, origin, msg.Author, msg.Channel, sourceGuild, contentAvailable);
-        }
-
-        var guild = client.GetGuild(sourceGuild!.Id);
-        var channel = (guild.GetChannel(msg.Channel.Id) as IMessageChannel)
-            ?? await client.GetChannelAsync(msg.Channel.Id) as IMessageChannel;
-        // no GuildMembers intent: cache first, REST otherwise
-        var author = await ((IGuild)guild).GetUserAsync(msg.Author.Id);
-        if (channel == null || author == null)
-        {
-            logger.LogDebug("Could not resolve channel {channelId} or author {userId} through the main client", msg.Channel.Id, msg.Author.Id);
-            return null;
-        }
-        return new IncomingMessage(msg, origin, author, channel, guild, contentAvailable: true);
     }
 
     // Commands run detached from OnInteractionCreated (RunMode.Async), so the span is closed
@@ -1012,12 +875,8 @@ public class DiscordHandler : BackgroundService
 
         if (MessageController.IsConfiguredCacheChannel(msg.Channel.Id))
         {
-            // a main-client copy without content would overwrite the stored text with a blank
-            if (msg.ContentAvailable)
-            {
-                var mentionedUsers = msg.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
-                await persistence.SaveDiscordMessage(MessageController.MapMessage(msg.Source, mentionedUsers));
-            }
+            var mentionedUsers = msg.MentionedUsers.ToDictionary(u => u.Id, u => u.Username);
+            await persistence.SaveDiscordMessage(MessageController.MapMessage(msg.Source, mentionedUsers));
         }
 
         // Detect a compromised account dumping images into multiple channels in fast succession.
@@ -1071,7 +930,7 @@ public class DiscordHandler : BackgroundService
         }
         
         // Check for suspicious hacked account messages: empty content + 4 image attachments
-        if (msg.ContentAvailable && string.IsNullOrWhiteSpace(msg.Content) && msg.Attachments.Count == 4)
+        if (string.IsNullOrWhiteSpace(msg.Content) && msg.Attachments.Count == 4)
         {
             // Check if all attachments are images
             bool allImages = msg.Attachments.All(att => 
@@ -1323,8 +1182,7 @@ public class DiscordHandler : BackgroundService
     /// <returns>true if the message was handled (and processing should stop).</returns>
     private async Task<bool> HandleInviteScam(IncomingMessage msg)
     {
-        if (!msg.ContentAvailable
-            || msg.Guild is not SocketGuild guild
+        if (msg.Guild is not SocketGuild guild
             || !IsInviteScamGuild(guild.Id)
             || !InviteScamRegex.IsMatch(msg.Content))
             return false;

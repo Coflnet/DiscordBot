@@ -46,17 +46,16 @@ public class MessageController : ControllerBase
             return NotFound(new { error = "channel_not_found", message = $"Channel '{channelName}' not found." });
         }
         logger.LogInformation($"Fetching messages for channel '{channelName}' (ID: {channelId}).");
-        // TEMPORARY BRIDGE: reads go through the fallback client (see FallbackMessageSource); remove together with it
         ulong oldest = 0;
         for (int i = 0; i < 500; i++)
         {
             var page = await discordHandler.GetCacheMessages(channelId, oldest);
-            if (page.RawCount == 0)
+            if (page.Messages.Count == 0)
             {
                 logger.LogInformation($"No more messages found in channel '{channelName}' (ID: {channelId}).");
                 return Ok(new { message = $"Messages fetched and saved for channel '{channelName}'. about {i * 100}" });
             }
-            var messages = page.Usable.OfType<RestUserMessage>().Select(MapMessage).ToList();
+            var messages = page.Messages.OfType<RestUserMessage>().Select(MapMessage).ToList();
             foreach (var message in messages)
             {
                 await persistence.SaveDiscordMessage(message);
@@ -118,11 +117,11 @@ public class MessageController : ControllerBase
         while (true)
         {
             var page = await discordHandler.GetCacheMessages(channelId, cursor);
-            if (page.RawCount == 0)
+            if (page.Messages.Count == 0)
                 break;
-            logger.LogInformation($"Retrieved {page.RawCount} messages from channel (ID: {channelId}).");
-            result.AddRange(page.Usable.OfType<RestUserMessage>().Select(MapMessage).Where(window.Contains));
-            if (page.RawCount < 100 || page.OldestId < window.StartSnowflake)
+            logger.LogInformation($"Retrieved {page.Messages.Count} messages from channel (ID: {channelId}).");
+            result.AddRange(page.Messages.OfType<RestUserMessage>().Select(MapMessage).Where(window.Contains));
+            if (page.Messages.Count < 100 || page.OldestId < window.StartSnowflake)
                 break;
             cursor = page.OldestId;
             await Task.Delay(2000); // Wait for 2 seconds before fetching more messages

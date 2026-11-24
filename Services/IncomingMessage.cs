@@ -2,34 +2,26 @@ using Discord;
 using Discord.WebSocket;
 
 /// <summary>
-/// A message to run through the moderation pipeline. Content, attachments, ids and mentions come from
-/// <see cref="Source"/> (which may belong to the temporary fallback client); the author, channel and
-/// guild are resolved through the MAIN client so all actions (delete, timeout, kick, reply, threads)
-/// are performed by the main bot identity.
+/// A message to run through the moderation pipeline: a thin wrapper around the gateway message
+/// together with its author, channel and guild.
 /// </summary>
 public sealed class IncomingMessage
 {
-    public IncomingMessage(SocketMessage source, MessageSource origin, IUser author, IMessageChannel channel, SocketGuild? guild, bool contentAvailable)
+    public IncomingMessage(SocketMessage source, IUser author, IMessageChannel channel, SocketGuild? guild)
     {
-        ContentAvailable = contentAvailable;
         Source = source;
-        Origin = origin;
         Author = author;
         Channel = channel;
         Guild = guild;
     }
 
     public SocketMessage Source { get; }
-    public MessageSource Origin { get; }
-    /// <summary>Main-client user (an <see cref="IGuildUser"/> for guild messages).</summary>
+    /// <summary>The author (an <see cref="IGuildUser"/> for guild messages).</summary>
     public IUser Author { get; }
-    /// <summary>Main-client channel.</summary>
     public IMessageChannel Channel { get; }
-    /// <summary>Main-client guild, null for DMs.</summary>
+    /// <summary>The guild, null for DMs.</summary>
     public SocketGuild? Guild { get; }
 
-    /// <summary>False when the text was withheld by Discord (missing Message Content intent), so an empty Content means "unknown".</summary>
-    public bool ContentAvailable { get; }
     public ulong Id => Source.Id;
     public string Content => Source.Content;
     public IReadOnlyCollection<IAttachment> Attachments => Source.Attachments;
@@ -44,7 +36,6 @@ public sealed class IncomingMessage
     public Task<IUserMessage> ReplyAsync(string content, Embed? embed = null)
         => Channel.SendMessageAsync(content, false, embed, null, null, new MessageReference(Id));
 
-    /// <summary>A message object usable for API calls that need an IMessage (only the id matters).</summary>
-    public async Task<IMessage> GetMessageAsync()
-        => Origin == MessageSource.Main ? Source : await Channel.GetMessageAsync(Id);
+    /// <summary>A message object usable for API calls that need an IMessage.</summary>
+    public Task<IMessage> GetMessageAsync() => Task.FromResult<IMessage>(Source);
 }
